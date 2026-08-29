@@ -187,3 +187,119 @@ export function formatActivityDuration(milliseconds: number): string {
     seconds.toString().padStart(2, "0"),
   ].join(":");
 }
+
+/**
+ * --------------------------------------------------
+ * REBUILD TIMER FROM ACTIVITY HISTORY
+ * --------------------------------------------------
+ *
+ * Reconstructs dashboard timer state from the
+ * persisted activity history.
+ *
+ * Completed events become accumulated totals.
+ * The currently open event becomes the live timer.
+ */
+
+export function createActivityTimerStateFromHistory(
+  events: Array<{
+    activity: DriverActivityType;
+    startedAt: string;
+    endedAt: string | null;
+    durationMilliseconds: number | null;
+  }>,
+  fallbackNow: number = Date.now(),
+): ActivityTimerState {
+  const totals: ActivityTotals = {
+    driving: 0,
+    break: 0,
+    otherWork: 0,
+    poa: 0,
+  };
+
+  const currentDate = new Date(fallbackNow);
+
+  const dayStart = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    currentDate.getDate(),
+    0,
+    0,
+    0,
+    0,
+  ).getTime();
+
+  const dayEnd = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    currentDate.getDate() + 1,
+    0,
+    0,
+    0,
+    0,
+  ).getTime();
+
+  let currentActivity: DriverActivityType = "other-work";
+  let currentActivityStartedAt = fallbackNow;
+
+  for (const event of events) {
+    const eventStart = new Date(event.startedAt).getTime();
+
+    const eventEnd =
+      event.endedAt !== null ? new Date(event.endedAt).getTime() : fallbackNow;
+
+    if (!Number.isFinite(eventStart) || !Number.isFinite(eventEnd)) {
+      continue;
+    }
+
+    const visibleStart = Math.max(eventStart, dayStart);
+
+    const visibleEnd = Math.min(eventEnd, dayEnd);
+
+    const visibleDuration = Math.max(0, visibleEnd - visibleStart);
+
+    /**
+     * Only completed activity belongs in totals.
+     *
+     * The currently open activity is added live by
+     * getActivityElapsedMilliseconds().
+     */
+    if (event.endedAt !== null && visibleDuration > 0) {
+      switch (event.activity) {
+        case "driving":
+          totals.driving += visibleDuration;
+          break;
+
+        case "break":
+          totals.break += visibleDuration;
+          break;
+
+        case "other-work":
+          totals.otherWork += visibleDuration;
+          break;
+
+        case "poa":
+          totals.poa += visibleDuration;
+          break;
+      }
+    }
+
+    /**
+     * Restore the currently open activity.
+     *
+     * If it began before local midnight, start the
+     * dashboard's live portion at midnight so the
+     * previous day's time is not counted today.
+     */
+    if (event.endedAt === null) {
+      currentActivity = event.activity;
+
+      currentActivityStartedAt = Math.max(eventStart, dayStart);
+    }
+  }
+
+  return {
+    currentActivity,
+    currentActivityStartedAt,
+    totals,
+  };
+}

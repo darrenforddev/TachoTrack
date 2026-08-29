@@ -1,5 +1,23 @@
-import { router } from "expo-router";
-import { useState } from "react";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
+
+import { calculateFortnightlyDrivingState } from "../../engine/fortnightlyDrivingState";
+
+import {
+  createDriverHistoryArchive,
+  getDriverDaysForMonth,
+} from "../../data/driverHistoryArchive";
+
+import { loadDriverHistoryArchive } from "../../data/driverHistoryArchiveStorage";
+
+import {
+  createCurrentFortnightlyDriverHistory,
+  rollFortnightlyDriverHistoryForward,
+} from "../../data/fortnightlyDriverHistory";
+
+import { loadFortnightlyDriverHistory } from "../../data/weeklyDriverHistoryStorage";
+
+import { evaluateDriverDay } from "../../engine/complianceEngine";
 
 import {
   Pressable,
@@ -43,87 +61,79 @@ interface CalendarWeek {
  * compensation events now come through the
  * Calendar Compliance Event Adapter.
  */
-const monthWeeks: CalendarWeek[] = [
-  {
-    weekNumber: 31,
-    days: [
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: 1, state: "good" },
-      { date: 2, state: "rest" },
-    ],
-  },
-
-  {
-    weekNumber: 32,
-    days: [
-      { date: 3, state: "good" },
-      { date: 4, state: "good" },
-      { date: 5, state: "warning" },
-      { date: 6, state: "good" },
-      { date: 7, state: "good" },
-      { date: 8, state: "good" },
-      { date: 9, state: "rest" },
-    ],
-  },
-
-  {
-    weekNumber: 33,
-    days: [
-      { date: 10, state: "good" },
-      { date: 11, state: "good" },
-      { date: 12, state: "good" },
-      { date: 13, state: "good" },
-      { date: 14, state: "good" },
-      { date: 15, state: "good" },
-      { date: 16, state: "rest" },
-    ],
-  },
-
-  {
-    weekNumber: 34,
-    days: [
-      { date: 17, state: "good" },
-      { date: 18, state: "breach" },
-      { date: 19, state: "good" },
-      { date: 20, state: "good" },
-      { date: 21, state: "warning" },
-      { date: 22, state: "good" },
-      { date: 23, state: "rest" },
-    ],
-  },
-
-  {
-    weekNumber: 35,
-    days: [
-      { date: 24, state: "good" },
-      { date: 25, state: "good" },
-      { date: 26, state: "breach" },
-      { date: 27, state: "good" },
-      { date: 28, state: "good" },
-      { date: 29, state: "good" },
-      { date: 30, state: "rest" },
-    ],
-  },
-
-  {
-    weekNumber: 36,
-    days: [
-      { date: 31, state: "good" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-      { date: null, state: "empty" },
-    ],
-  },
-];
 
 const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function getISOWeekNumber(date: Date): number {
+  const target = new Date(date);
+
+  target.setHours(0, 0, 0, 0);
+
+  target.setDate(target.getDate() + 3 - ((target.getDay() + 6) % 7));
+
+  const week1 = new Date(target.getFullYear(), 0, 4);
+
+  return (
+    1 +
+    Math.round(
+      ((target.getTime() - week1.getTime()) / 86400000 -
+        3 +
+        ((week1.getDay() + 6) % 7)) /
+        7,
+    )
+  );
+}
+
+function buildMonthWeeks(year: number, month: number): CalendarWeek[] {
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+
+  const daysInMonth = lastDay.getDate();
+
+  // Convert JavaScript Sunday-first numbering
+  // into our Monday-first calendar.
+  const firstDayOffset = (firstDay.getDay() + 6) % 7;
+
+  const days: CalendarDay[] = [];
+
+  for (let index = 0; index < firstDayOffset; index += 1) {
+    days.push({
+      date: null,
+      state: "empty",
+    });
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    days.push({
+      date: day,
+      state: "good",
+    });
+  }
+
+  while (days.length % 7 !== 0) {
+    days.push({
+      date: null,
+      state: "empty",
+    });
+  }
+
+  const weeks: CalendarWeek[] = [];
+
+  for (let index = 0; index < days.length; index += 7) {
+    const weekDays = days.slice(index, index + 7);
+
+    const firstRealDay = weekDays.find((day) => day.date !== null);
+
+    const referenceDate = new Date(year, month, firstRealDay?.date ?? 1);
+
+    weeks.push({
+      weekNumber: getISOWeekNumber(referenceDate),
+      days: weekDays,
+    });
+  }
+
+  return weeks;
+}
 
 /**
  * --------------------------------------------------
@@ -269,8 +279,22 @@ function formatMinutes(minutes: number) {
   return `${hours}h ` + `${mins.toString().padStart(2, "0")}m`;
 }
 
-function getFullDate(day: number) {
-  return `2026-08-` + day.toString().padStart(2, "0");
+function formatFortnightDate(dateString: string) {
+  const date = new Date(`${dateString}T12:00:00`);
+
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getFullDate(year: number, month: number, day: number) {
+  return [
+    year,
+    String(month + 1).padStart(2, "0"),
+    String(day).padStart(2, "0"),
+  ].join("-");
 }
 
 /**
@@ -329,6 +353,177 @@ function resolveDayState(
 }
 
 export default function MonthlyDiaryScreen() {
+  const params = useLocalSearchParams<{
+    year?: string;
+    month?: string;
+  }>();
+
+  const initialYear =
+    typeof params.year === "string"
+      ? Number(params.year)
+      : new Date().getFullYear();
+
+  const initialMonth =
+    typeof params.month === "string"
+      ? Number(params.month)
+      : new Date().getMonth();
+  const [displayDate, setDisplayDate] = useState(() => ({
+    year: Number.isFinite(initialYear) ? initialYear : new Date().getFullYear(),
+
+    month:
+      Number.isFinite(initialMonth) && initialMonth >= 0 && initialMonth <= 11
+        ? initialMonth
+        : new Date().getMonth(),
+  }));
+
+  const displayYear = displayDate.year;
+  const displayMonth = displayDate.month;
+  const displayMonthName = new Date(
+    displayYear,
+    displayMonth,
+    1,
+  ).toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+  });
+
+  const displayMonthBadge = displayMonthName.toUpperCase();
+  function showPreviousMonth() {
+    setDisplayDate((current) => {
+      if (current.month === 0) {
+        return {
+          year: current.year - 1,
+          month: 11,
+        };
+      }
+
+      return {
+        year: current.year,
+        month: current.month - 1,
+      };
+    });
+  }
+
+  function showNextMonth() {
+    setDisplayDate((current) => {
+      if (current.month === 11) {
+        return {
+          year: current.year + 1,
+          month: 0,
+        };
+      }
+
+      return {
+        year: current.year,
+        month: current.month + 1,
+      };
+    });
+  }
+  const monthWeeks = useMemo(
+    () => buildMonthWeeks(displayYear, displayMonth),
+    [displayYear, displayMonth],
+  );
+  const [driverHistoryArchive, setDriverHistoryArchive] = useState(() =>
+    createDriverHistoryArchive(),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateDriverHistoryArchive() {
+      const storedArchive = await loadDriverHistoryArchive();
+
+      if (cancelled) {
+        return;
+      }
+
+      setDriverHistoryArchive(storedArchive);
+    }
+
+    void hydrateDriverHistoryArchive();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const archivedMonthDays = useMemo(
+    () =>
+      getDriverDaysForMonth(driverHistoryArchive, displayYear, displayMonth),
+    [driverHistoryArchive, displayYear, displayMonth],
+  );
+  const [fortnightlyHistory, setFortnightlyHistory] = useState(() =>
+    createCurrentFortnightlyDriverHistory(Date.now()),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateFortnightlyHistory() {
+      const stored = await loadFortnightlyDriverHistory();
+
+      if (cancelled) {
+        return;
+      }
+
+      if (stored !== null) {
+        setFortnightlyHistory(
+          rollFortnightlyDriverHistoryForward(stored, Date.now()),
+        );
+      }
+    }
+
+    void hydrateFortnightlyHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fortnightlyDrivingState = useMemo(
+    () =>
+      calculateFortnightlyDrivingState(
+        fortnightlyHistory.previousWeek.days,
+        fortnightlyHistory.currentWeek.days,
+      ),
+    [fortnightlyHistory.previousWeek.days, fortnightlyHistory.currentWeek.days],
+  );
+
+  const monthTotalDrivingMinutes = archivedMonthDays.reduce(
+    (total, day) => total + day.drivingMinutes,
+    0,
+  );
+
+  const monthTotalWorkingMinutes = archivedMonthDays.reduce(
+    (total, day) => total + day.drivingMinutes + day.otherWorkMinutes,
+    0,
+  );
+
+  const monthReducedRests = archivedMonthDays.filter(
+    (day) => day.dailyRestType === "reduced",
+  ).length;
+
+  const storedComplianceResults = archivedMonthDays.map((day) =>
+    evaluateDriverDay(day),
+  );
+
+  const monthAmberDays = storedComplianceResults.filter(
+    (result) => result.level === "warning",
+  ).length;
+
+  const monthBreachDays = storedComplianceResults.filter(
+    (result) => result.level === "breach",
+  ).length;
+
+  const monthGoodDays = storedComplianceResults.filter(
+    (result) => result.level === "good",
+  ).length;
+
+  const monthCompliancePercentage =
+    storedComplianceResults.length === 0
+      ? 100
+      : Math.round((monthGoodDays / storedComplianceResults.length) * 100);
+
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const selectedEvents = selectedDate
@@ -348,26 +543,113 @@ export default function MonthlyDiaryScreen() {
           </View>
 
           <View style={styles.headerRight}>
-            <Pressable style={styles.backButton} onPress={() => router.back()}>
-              <Text style={styles.backText}>← Dashboard</Text>
+            <Pressable
+              style={styles.backButton}
+              onPress={() =>
+                router.push({
+                  pathname: "/diary/year",
+                  params: {
+                    year: String(displayYear),
+                  },
+                })
+              }
+            >
+              <Text style={styles.backText}>← Year View</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.backButton}
+              onPress={() => router.replace("/")}
+            >
+              <Text style={styles.backText}>Dashboard</Text>
             </Pressable>
 
             <View style={styles.monthBadge}>
-              <Text style={styles.monthBadgeText}>AUGUST 2026</Text>
+              <Text style={styles.monthBadgeText}>{displayMonthBadge}</Text>
             </View>
           </View>
+        </View>
+
+        <View style={styles.diaryTabs}>
+          <Pressable
+            style={styles.diaryTab}
+            onPress={() => router.push("/diary/week")}
+          >
+            <Text style={styles.diaryTabText}>Week</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.diaryTab}
+            onPress={() => router.push("/diary/fortnight")}
+          >
+            <Text style={styles.diaryTabText}>Fortnight</Text>
+          </Pressable>
+
+          <View style={[styles.diaryTab, styles.diaryTabActive]}>
+            <Text style={styles.diaryTabTextActive}>Month</Text>
+          </View>
+        </View>
+
+        <View style={styles.fortnightStatus}>
+          <View style={styles.fortnightStatusHeader}>
+            <View>
+              <Text style={styles.fortnightStatusLabel}>FORTNIGHT DRIVING</Text>
+
+              <Text style={styles.fortnightDateRange}>
+                {formatFortnightDate(
+                  fortnightlyHistory.previousWeek.weekStartDate,
+                )}
+                {" – "}
+                {formatFortnightDate(
+                  fortnightlyHistory.currentWeek.weekEndDate,
+                )}
+              </Text>
+
+              <Text style={styles.fortnightStatusValue}>
+                {formatMinutes(fortnightlyDrivingState.drivingMinutesUsed)}
+                {" / "}
+                {formatMinutes(fortnightlyDrivingState.limitMinutes)}
+              </Text>
+            </View>
+
+            <View style={styles.fortnightRemaining}>
+              <Text style={styles.fortnightRemainingLabel}>REMAINING</Text>
+
+              <Text style={styles.fortnightRemainingValue}>
+                {formatMinutes(fortnightlyDrivingState.remainingMinutes)}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.fortnightProgressTrack}>
+            <View
+              style={[
+                styles.fortnightProgressFill,
+                {
+                  width: `${Math.min(
+                    100,
+                    fortnightlyDrivingState.percentageUsed,
+                  )}%`,
+                },
+              ]}
+            />
+          </View>
+
+          <Text style={styles.fortnightPercentage}>
+            {fortnightlyDrivingState.percentageUsed.toFixed(1)}% of 90h used
+          </Text>
         </View>
 
         {/* MONTH NAVIGATION */}
 
         <View style={styles.monthNavigation}>
-          <Pressable style={styles.navButton}>
+          <Pressable style={styles.navButton} onPress={showPreviousMonth}>
             <Text style={styles.navText}>‹ Previous Month</Text>
           </Pressable>
 
-          <Text style={styles.currentMonth}>August 2026</Text>
+          <Text style={styles.currentMonth}>{displayMonthName}</Text>
 
-          <Pressable style={styles.navButton}>
+          <Pressable style={styles.navButton} onPress={showNextMonth}>
             <Text style={styles.navText}>Next Month ›</Text>
           </Pressable>
         </View>
@@ -412,14 +694,33 @@ export default function MonthlyDiaryScreen() {
                   );
                 }
 
-                const fullDate = getFullDate(day.date);
+                const fullDate = getFullDate(
+                  displayYear,
+                  displayMonth,
+                  day.date,
+                );
+                const storedDay = archivedMonthDays.find(
+                  (item) => item.date === fullDate,
+                );
+
+                const storedCompliance =
+                  storedDay !== undefined ? evaluateDriverDay(storedDay) : null;
 
                 const dayEvents = getCalendarEventsForDate(
                   calendarEvents,
                   fullDate,
                 );
 
-                const displayState = resolveDayState(day.state, dayEvents);
+                const baseState: ComplianceState =
+                  storedDay === undefined
+                    ? "empty"
+                    : storedDay.restMinutes > 0 &&
+                        storedDay.drivingMinutes === 0 &&
+                        storedDay.otherWorkMinutes === 0
+                      ? "rest"
+                      : (storedCompliance?.level ?? "empty");
+
+                const displayState = resolveDayState(baseState, dayEvents);
 
                 return (
                   <Pressable
@@ -434,6 +735,8 @@ export default function MonthlyDiaryScreen() {
                       displayState === "breach" && styles.dayBreach,
 
                       displayState === "rest" && styles.dayRest,
+
+                      displayState === "empty" && styles.dayEmpty,
                     ]}
                     onPress={() => {
                       if (dayEvents.length > 0) {
@@ -475,6 +778,29 @@ export default function MonthlyDiaryScreen() {
                         </View>
                       )}
                     </View>
+
+                    {storedDay !== undefined &&
+                      storedDay.drivingMinutes > 0 && (
+                        <Text style={styles.dayDrivingText}>
+                          {formatMinutes(storedDay.drivingMinutes)}
+                        </Text>
+                      )}
+
+                    {storedDay !== undefined &&
+                      storedDay.otherWorkMinutes > 0 && (
+                        <Text style={styles.dayOtherWorkText}>
+                          {formatMinutes(storedDay.otherWorkMinutes)} Other Work
+                        </Text>
+                      )}
+
+                    {storedDay !== undefined &&
+                      storedDay.restMinutes > 0 &&
+                      storedDay.drivingMinutes === 0 &&
+                      storedDay.otherWorkMinutes === 0 && (
+                        <Text style={styles.dayRestText}>
+                          {formatMinutes(storedDay.restMinutes)} Rest
+                        </Text>
+                      )}
 
                     <Text style={styles.stateText}>
                       {getStateLabel(displayState)}
@@ -631,37 +957,41 @@ export default function MonthlyDiaryScreen() {
           <View style={styles.summaryItem}>
             <Text style={styles.summaryLabel}>Total Driving</Text>
 
-            <Text style={styles.summaryValue}>184h 32m</Text>
+            <Text style={styles.summaryValue}>
+              {formatMinutes(monthTotalDrivingMinutes)}
+            </Text>
           </View>
 
           <View style={styles.summaryItem}>
             <Text style={styles.summaryLabel}>Working Time</Text>
 
-            <Text style={styles.summaryValue}>219h 10m</Text>
+            <Text style={styles.summaryValue}>
+              {formatMinutes(monthTotalWorkingMinutes)}
+            </Text>
           </View>
 
           <View style={styles.summaryItem}>
             <Text style={styles.summaryLabel}>Reduced Rests</Text>
 
-            <Text style={styles.summaryValue}>3</Text>
+            <Text style={styles.summaryValue}>{monthReducedRests}</Text>
           </View>
 
           <View style={styles.summaryItem}>
             <Text style={styles.summaryLabel}>Amber Days</Text>
 
-            <Text style={styles.summaryWarning}>2</Text>
+            <Text style={styles.summaryWarning}>{monthAmberDays}</Text>
           </View>
 
           <View style={styles.summaryItem}>
             <Text style={styles.summaryLabel}>Breach Days</Text>
 
-            <Text style={styles.summaryBreach}>2</Text>
+            <Text style={styles.summaryBreach}>{monthBreachDays}</Text>
           </View>
 
           <View style={styles.summaryItem}>
             <Text style={styles.summaryLabel}>Compliance</Text>
 
-            <Text style={styles.summaryGood}>94%</Text>
+            <Text style={styles.summaryGood}>{monthCompliancePercentage}%</Text>
           </View>
         </View>
       </ScrollView>
@@ -675,6 +1005,82 @@ const styles = StyleSheet.create({
     backgroundColor: "#06111f",
   },
 
+  fortnightStatus: {
+    backgroundColor: "#0b1929",
+    borderWidth: 1,
+    borderColor: "#183049",
+    borderRadius: 16,
+    padding: 16,
+  },
+
+  fortnightStatusHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
+  },
+
+  fortnightStatusLabel: {
+    color: "#8293a8",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  fortnightStatusValue: {
+    color: "#ffffff",
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  fortnightRemaining: {
+    alignItems: "flex-end",
+  },
+
+  fortnightRemainingLabel: {
+    color: "#8293a8",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  fortnightRemainingValue: {
+    color: "#55e68e",
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  fortnightProgressTrack: {
+    width: "100%",
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#17324d",
+    overflow: "hidden",
+    marginTop: 14,
+  },
+
+  fortnightProgressFill: {
+    height: "100%",
+    borderRadius: 5,
+    backgroundColor: "#258cff",
+  },
+
+  fortnightPercentage: {
+    color: "#8293a8",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 8,
+  },
+
+  fortnightDateRange: {
+    color: "#8ec7ff",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+
   page: {
     flexGrow: 1,
     padding: 24,
@@ -686,6 +1092,37 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+
+  diaryTabs: {
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  diaryTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#183049",
+    backgroundColor: "#081523",
+  },
+
+  diaryTabActive: {
+    borderColor: "#258cff",
+    backgroundColor: "#0d3159",
+  },
+
+  diaryTabText: {
+    color: "#8293a8",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  diaryTabTextActive: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
   },
 
   brand: {
@@ -797,7 +1234,7 @@ const styles = StyleSheet.create({
 
   weekRow: {
     flexDirection: "row",
-    minHeight: 74,
+    minHeight: 92,
     borderTopWidth: 1,
     borderTopColor: "#183049",
   },
@@ -826,7 +1263,7 @@ const styles = StyleSheet.create({
 
   dayCell: {
     flex: 1,
-    minHeight: 66,
+    minHeight: 84,
     margin: 4,
     borderRadius: 9,
     padding: 8,
@@ -864,6 +1301,27 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 17,
     fontWeight: "900",
+  },
+
+  dayDrivingText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  dayOtherWorkText: {
+    color: "#c5d4e4",
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+
+  dayRestText: {
+    color: "#8ec7ff",
+    fontSize: 10,
+    fontWeight: "800",
+    marginTop: 2,
   },
 
   stateText: {

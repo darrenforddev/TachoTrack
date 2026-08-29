@@ -28,10 +28,10 @@ export const WTD_LIMITS = {
   /**
    * Working-time break rules.
    *
-   * 6–9 hours working:
+   * More than 6 hours, up to and including 9 hours:
    * minimum total break = 30 minutes.
    *
-   * More than 9 hours working:
+   * More than 9 hours:
    * minimum total break = 45 minutes.
    */
   sixHourThresholdMinutes: 6 * 60,
@@ -49,8 +49,8 @@ export const WTD_LIMITS = {
   /**
    * Night work default limit.
    *
-   * We will later make night-work handling
-   * configurable because agreements can modify this.
+   * Night-work handling will be developed
+   * separately because agreements can modify this.
    */
   nightWorkMaximumMinutes: 10 * 60,
 } as const;
@@ -74,26 +74,26 @@ function getWorstLevel(
 }
 
 /**
- * Working time for road transport WTD purposes.
+ * Working time for road-transport WTD purposes.
  *
  * Driving + Other Work count as working time.
  *
- * POA, qualifying breaks and rest are not included
- * in this simple working-time total.
+ * POA, breaks and rest are not included in this
+ * working-time total.
  */
 export function getDailyWorkingMinutes(day: DriverDay): number {
   return day.drivingMinutes + day.otherWorkMinutes;
 }
 
 /**
- * Returns qualifying WTD break minutes.
+ * Return qualifying WTD break minutes.
  *
  * Only break periods of at least 15 minutes
- * are counted here.
+ * are counted.
  *
- * We deliberately use the activity timeline
- * rather than day.breakMinutes so that later
- * we can distinguish valid and invalid breaks.
+ * The activity timeline is deliberately used
+ * instead of day.breakMinutes so that invalid
+ * short break segments are excluded.
  */
 export function getQualifyingWtdBreakMinutes(day: DriverDay): number {
   return day.activities
@@ -106,8 +106,8 @@ export function getQualifyingWtdBreakMinutes(day: DriverDay): number {
 }
 
 /**
- * Determine how much WTD break is required
- * from the amount of working time performed.
+ * Determine the total WTD break requirement from
+ * the amount of working time performed.
  */
 export function getRequiredWtdBreakMinutes(workingMinutes: number): number {
   if (workingMinutes > WTD_LIMITS.nineHourThresholdMinutes) {
@@ -121,9 +121,104 @@ export function getRequiredWtdBreakMinutes(workingMinutes: number): number {
   return 0;
 }
 
+/**
+ * Check whether the activity timeline contains
+ * more than six consecutive hours of working time.
+ *
+ * Driving and Other Work increase the working-time
+ * counter.
+ *
+ * A qualifying break of at least 15 minutes resets
+ * the counter.
+ *
+ * Rest also resets the counter.
+ *
+ * POA does not increase the working-time counter,
+ * but is deliberately not treated here as a
+ * qualifying WTD break.
+ */
+export function checkConsecutiveWtdWorkingTime(day: DriverDay): WtdRuleResult {
+  const issues: DailyComplianceIssue[] = [];
+
+  const activities = [...day.activities].sort(
+    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
+  );
+
+  let consecutiveWorkingMinutes = 0;
+
+  for (const activity of activities) {
+    const isWorkingActivity =
+      activity.type === "driving" || activity.type === "otherWork";
+
+    if (isWorkingActivity) {
+      consecutiveWorkingMinutes += activity.durationMinutes;
+
+      if (consecutiveWorkingMinutes > WTD_LIMITS.sixHourThresholdMinutes) {
+        const excess =
+          consecutiveWorkingMinutes - WTD_LIMITS.sixHourThresholdMinutes;
+
+        issues.push({
+          id: `${day.id}-wtd-consecutive-working-breach`,
+          date: day.date,
+          rule: "working-time-break",
+          level: "breach",
+          title: "Six-hour working-time limit exceeded",
+          description:
+            `More than six consecutive hours of working time ` +
+            `were recorded without a qualifying break. ` +
+            `The consecutive working period exceeded six hours ` +
+            `by ${excess} minutes.`,
+          varianceMinutes: excess,
+        });
+
+        return {
+          level: "breach",
+          issues,
+        };
+      }
+
+      continue;
+    }
+
+    if (
+      activity.type === "break" &&
+      activity.durationMinutes >= WTD_LIMITS.minimumBreakSegmentMinutes
+    ) {
+      consecutiveWorkingMinutes = 0;
+      continue;
+    }
+
+    if (activity.type === "rest") {
+      consecutiveWorkingMinutes = 0;
+    }
+  }
+
+  return {
+    level: "good",
+    issues,
+  };
+}
+
+/**
+ * Evaluate the daily WTD break requirements.
+ *
+ * Two separate protections are combined:
+ *
+ * 1. No more than six consecutive hours of
+ *    working time without a qualifying break.
+ *
+ * 2. Required total qualifying break time based
+ *    on the day's total working time.
+ */
 export function checkDailyWtdBreaks(day: DriverDay): WtdRuleResult {
   const issues: DailyComplianceIssue[] = [];
   let level: ComplianceLevel = "good";
+
+  const consecutiveResult = checkConsecutiveWtdWorkingTime(day);
+
+  issues.push(...consecutiveResult.issues);
+
+  level = getWorstLevel(level, consecutiveResult.level);
 
   const workingMinutes = getDailyWorkingMinutes(day);
 
@@ -155,7 +250,7 @@ export function checkDailyWtdBreaks(day: DriverDay): WtdRuleResult {
       varianceMinutes: shortfall,
     });
 
-    level = "breach";
+    level = getWorstLevel(level, "breach");
   }
 
   return {
@@ -164,6 +259,9 @@ export function checkDailyWtdBreaks(day: DriverDay): WtdRuleResult {
   };
 }
 
+/**
+ * Check the maximum working time in a single week.
+ */
 export function checkWeeklyWorkingTime(days: DriverDay[]): WtdRuleResult {
   const issues: DailyComplianceIssue[] = [];
   let level: ComplianceLevel = "good";
@@ -205,7 +303,7 @@ export function checkWeeklyWorkingTime(days: DriverDay[]): WtdRuleResult {
  */
 export function calculateRollingWtdAverage(
   weeklyWorkingMinutes: number[],
-  referencePeriodWeeks = WTD_LIMITS.defaultReferencePeriodWeeks,
+  referencePeriodWeeks: number = WTD_LIMITS.defaultReferencePeriodWeeks,
 ): RollingWtdResult {
   const weeks = weeklyWorkingMinutes.slice(-referencePeriodWeeks);
 
@@ -228,8 +326,8 @@ export function calculateRollingWtdAverage(
      * TachoTrack warning band.
      *
      * This is not itself a legal breach.
-     * It gives the driver an early warning
-     * that the rolling average is approaching 48h.
+     * It provides an early warning that
+     * the rolling average is approaching 48h.
      */
     level = "warning";
   }
@@ -244,7 +342,7 @@ export function calculateRollingWtdAverage(
 
 export function checkRollingWtdAverage(
   weeklyWorkingMinutes: number[],
-  referencePeriodWeeks = WTD_LIMITS.defaultReferencePeriodWeeks,
+  referencePeriodWeeks: number = WTD_LIMITS.defaultReferencePeriodWeeks,
 ): WtdRuleResult {
   const issues: DailyComplianceIssue[] = [];
   let level: ComplianceLevel = "good";

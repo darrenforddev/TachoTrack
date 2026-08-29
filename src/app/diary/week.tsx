@@ -1,5 +1,14 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import {
+  createCurrentFortnightlyDriverHistory,
+  rollFortnightlyDriverHistoryForward,
+} from "../../data/fortnightlyDriverHistory";
+
+import { loadFortnightlyDriverHistory } from "../../data/weeklyDriverHistoryStorage";
+
+import { calculateFortnightlyDrivingState } from "../../engine/fortnightlyDrivingState";
 
 import {
   Pressable,
@@ -205,6 +214,42 @@ function getCurrentStateLabel(
 }
 
 export default function WeeklyDiaryScreen() {
+  const [fortnightlyHistory, setFortnightlyHistory] = useState(() =>
+    createCurrentFortnightlyDriverHistory(Date.now()),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateFortnightlyHistory() {
+      const stored = await loadFortnightlyDriverHistory();
+
+      if (cancelled) {
+        return;
+      }
+
+      if (stored !== null) {
+        setFortnightlyHistory(
+          rollFortnightlyDriverHistoryForward(stored, Date.now()),
+        );
+      }
+    }
+
+    void hydrateFortnightlyHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fortnightlyDrivingState = useMemo(
+    () =>
+      calculateFortnightlyDrivingState(
+        fortnightlyHistory.previousWeek.days,
+        fortnightlyHistory.currentWeek.days,
+      ),
+    [fortnightlyHistory.previousWeek.days, fortnightlyHistory.currentWeek.days],
+  );
   const [selectedCompensationEvent, setSelectedCompensationEvent] =
     useState<CalendarComplianceEvent | null>(null);
 
@@ -260,7 +305,75 @@ export default function WeeklyDiaryScreen() {
           </View>
         </View>
 
+        <View style={styles.diaryTabs}>
+          <View style={[styles.diaryTab, styles.diaryTabActive]}>
+            <Text style={styles.diaryTabTextActive}>Week</Text>
+          </View>
+
+          <Pressable
+            style={styles.diaryTab}
+            onPress={() => router.push("/diary/fortnight")}
+          >
+            <Text style={styles.diaryTabText}>Fortnight</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.diaryTab}
+            onPress={() => router.push("/diary/month")}
+          >
+            <Text style={styles.diaryTabText}>Month</Text>
+          </Pressable>
+        </View>
+
         {/* WEEK NAVIGATION */}
+
+        <View style={styles.fortnightStatus}>
+          <View style={styles.fortnightStatusHeader}>
+            <View>
+              <Text style={styles.fortnightStatusLabel}>FORTNIGHT DRIVING</Text>
+
+              <Text style={styles.fortnightDateRange}>
+                {formatDisplayDate(
+                  fortnightlyHistory.previousWeek.weekStartDate,
+                )}
+                {" – "}
+                {formatDisplayDate(fortnightlyHistory.currentWeek.weekEndDate)}
+              </Text>
+
+              <Text style={styles.fortnightStatusValue}>
+                {formatMinutes(fortnightlyDrivingState.drivingMinutesUsed)}
+                {" / "}
+                {formatMinutes(fortnightlyDrivingState.limitMinutes)}
+              </Text>
+            </View>
+
+            <View style={styles.fortnightRemaining}>
+              <Text style={styles.fortnightRemainingLabel}>REMAINING</Text>
+
+              <Text style={styles.fortnightRemainingValue}>
+                {formatMinutes(fortnightlyDrivingState.remainingMinutes)}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.fortnightProgressTrack}>
+            <View
+              style={[
+                styles.fortnightProgressFill,
+                {
+                  width: `${Math.min(
+                    100,
+                    fortnightlyDrivingState.percentageUsed,
+                  )}%`,
+                },
+              ]}
+            />
+          </View>
+
+          <Text style={styles.fortnightPercentage}>
+            {fortnightlyDrivingState.percentageUsed.toFixed(1)}% of 90h used
+          </Text>
+        </View>
 
         <View style={styles.weekNavigation}>
           <Pressable style={styles.navButton}>
@@ -873,6 +986,113 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+  },
+
+  diaryTabs: {
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  diaryTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#183049",
+    backgroundColor: "#081523",
+  },
+
+  fortnightDateRange: {
+    color: "#8ec7ff",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+
+  fortnightStatus: {
+    backgroundColor: "#0b1929",
+    borderWidth: 1,
+    borderColor: "#183049",
+    borderRadius: 16,
+    padding: 16,
+  },
+
+  fortnightStatusHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
+  },
+
+  fortnightStatusLabel: {
+    color: "#8293a8",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  fortnightStatusValue: {
+    color: "#ffffff",
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  fortnightRemaining: {
+    alignItems: "flex-end",
+  },
+
+  fortnightRemainingLabel: {
+    color: "#8293a8",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  fortnightRemainingValue: {
+    color: "#55e68e",
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  fortnightProgressTrack: {
+    width: "100%",
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#17324d",
+    overflow: "hidden",
+    marginTop: 14,
+  },
+
+  fortnightProgressFill: {
+    height: "100%",
+    borderRadius: 5,
+    backgroundColor: "#258cff",
+  },
+
+  fortnightPercentage: {
+    color: "#8293a8",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 8,
+  },
+
+  diaryTabActive: {
+    borderColor: "#258cff",
+    backgroundColor: "#0d3159",
+  },
+
+  diaryTabText: {
+    color: "#8293a8",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  diaryTabTextActive: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
   },
 
   backButton: {

@@ -44,10 +44,21 @@ function getDayLevel(issues: DailyComplianceIssue[]): ComplianceLevel {
   return level;
 }
 
-export function evaluateDriverDay(day: DriverDay): DailyComplianceResult {
+export function evaluateDriverDay(
+  day: DriverDay,
+  options?: {
+    isLiveDay?: boolean;
+  },
+): DailyComplianceResult {
   const driving = evaluateDailyDrivingRules(day);
 
-  const rest = evaluateDailyRestRules(day);
+  const rest =
+    options?.isLiveDay === true
+      ? {
+          level: "good" as ComplianceLevel,
+          issues: [] as DailyComplianceIssue[],
+        }
+      : evaluateDailyRestRules(day);
 
   const wtd = evaluateDailyWtdRules(day);
 
@@ -80,8 +91,18 @@ export function evaluateDriverDay(day: DriverDay): DailyComplianceResult {
   };
 }
 
-export function evaluateDriverWeek(week: DriverWeek): WeeklyComplianceResult {
-  const dailyResults = week.days.map(evaluateDriverDay);
+export function evaluateDriverWeek(
+  week: DriverWeek,
+  options?: {
+    liveDate?: string;
+  },
+): WeeklyComplianceResult {
+  const dailyResults = week.days.map((day) =>
+    evaluateDriverDay(day, {
+      isLiveDay:
+        options?.liveDate !== undefined && day.date === options.liveDate,
+    }),
+  );
 
   const weeklyDriving = checkWeeklyDrivingLimit(week.days);
 

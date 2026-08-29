@@ -87,6 +87,37 @@ export function changeDriverActivity(
 
 /**
  * --------------------------------------------------
+ * REBUILD ACTIVITY STATE FROM HISTORY
+ * --------------------------------------------------
+ *
+ * Restores the currently active dashboard activity
+ * from persisted activity history.
+ */
+export function createActivityStateFromHistory(
+  events: Array<{
+    activity: DriverActivityType;
+    startedAt: string;
+    endedAt: string | null;
+  }>,
+  fallbackStartedAt: string = new Date().toISOString(),
+): DriverActivityState {
+  const activeEvent = [...events]
+    .reverse()
+    .find((event) => event.endedAt === null);
+
+  if (activeEvent === undefined) {
+    return createInitialActivityState(fallbackStartedAt);
+  }
+
+  return {
+    currentActivity: activeEvent.activity,
+    startedAt: activeEvent.startedAt,
+    isActive: true,
+  };
+}
+
+/**
+ * --------------------------------------------------
  * DRIVER-FACING LABEL
  * --------------------------------------------------
  */
