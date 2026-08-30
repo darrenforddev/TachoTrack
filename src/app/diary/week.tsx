@@ -14,11 +14,19 @@ import type { RestSession } from "../../data/restSession";
 
 import { loadRestSessionState } from "../../data/restSessionStorage";
 
-import { loadWeeklyRestAssignmentDecisions } from "../../data/weeklyRestWeekAssignmentStorage";
+import {
+  loadWeeklyRestAssignmentDecisions,
+  recordWeeklyRestAssignmentDecision,
+} from "../../data/weeklyRestWeekAssignmentStorage";
 
 import { buildWeeklyRestCompensationTimeline } from "../../engine/weeklyRestCompensationTimeline";
 
-import type { WeeklyRestWeekAssignmentDecision } from "../../engine/weeklyRestWeekAssignmentDecision";
+import {
+  confirmWeeklyRestWeekAssignment,
+  type WeeklyRestWeekAssignmentDecision,
+} from "../../engine/weeklyRestWeekAssignmentDecision";
+
+import type { WeeklyRestWeekAssignmentResult } from "../../engine/weeklyRestWeekAssignment";
 
 import {
   Pressable,
@@ -242,6 +250,18 @@ export default function WeeklyDiaryScreen() {
   const [weeklyRestAssignmentDecisions, setWeeklyRestAssignmentDecisions] =
     useState<WeeklyRestWeekAssignmentDecision[]>([]);
 
+  const [assignmentSelections, setAssignmentSelections] = useState<
+    Record<string, string>
+  >({});
+
+  const [savingAssignmentId, setSavingAssignmentId] = useState<string | null>(
+    null,
+  );
+
+  const [assignmentSaveError, setAssignmentSaveError] = useState<string | null>(
+    null,
+  );
+
   useEffect(() => {
     let cancelled = false;
 
@@ -297,6 +317,53 @@ export default function WeeklyDiaryScreen() {
       ),
     [restSessions, weeklyRestAssignmentDecisions, currentDate],
   );
+
+  async function lockPendingWeeklyRestAssignment(
+    assignment: WeeklyRestWeekAssignmentResult,
+  ): Promise<void> {
+    const selectedWeekStartDate =
+      assignmentSelections[assignment.restSessionId];
+
+    if (selectedWeekStartDate === undefined) {
+      setAssignmentSaveError("Select a week before confirming the assignment.");
+      return;
+    }
+
+    const decision = confirmWeeklyRestWeekAssignment(
+      assignment,
+      selectedWeekStartDate,
+    );
+
+    if (decision === null) {
+      setAssignmentSaveError(
+        "The weekly-rest assignment could not be confirmed.",
+      );
+      return;
+    }
+
+    setSavingAssignmentId(assignment.restSessionId);
+    setAssignmentSaveError(null);
+
+    try {
+      const recorded = await recordWeeklyRestAssignmentDecision(decision);
+
+      setWeeklyRestAssignmentDecisions(recorded.decisions);
+
+      setAssignmentSelections((currentSelections) => {
+        const nextSelections = { ...currentSelections };
+
+        delete nextSelections[assignment.restSessionId];
+
+        return nextSelections;
+      });
+    } catch {
+      setAssignmentSaveError(
+        "The weekly-rest assignment could not be saved. Please try again.",
+      );
+    } finally {
+      setSavingAssignmentId(null);
+    }
+  }
 
   const weeklyCalendarEvents = useMemo(
     () => toCalendarComplianceEvents(weeklyRestCompensationTimeline.events),
@@ -411,6 +478,121 @@ export default function WeeklyDiaryScreen() {
             {fortnightlyDrivingState.percentageUsed.toFixed(1)}% of 90h used
           </Text>
         </View>
+
+        {weeklyRestCompensationTimeline.pendingAssignments.length > 0 && (
+          <View style={styles.assignmentPanel}>
+            <View style={styles.assignmentPanelHeader}>
+              <Text style={styles.assignmentEyebrow}>ACTION REQUIRED</Text>
+
+              <Text style={styles.assignmentHeading}>
+                Confirm Weekly-Rest Week
+              </Text>
+
+              <Text style={styles.assignmentDescription}>
+                A completed weekly rest spans two ISO weeks. It must be counted
+                in one week only before TachoTrack can use it for compliance or
+                compensation.
+              </Text>
+            </View>
+
+            {assignmentSaveError !== null && (
+              <Text style={styles.assignmentError}>{assignmentSaveError}</Text>
+            )}
+
+            {weeklyRestCompensationTimeline.pendingAssignments.map(
+              (assignment) => {
+                const selectedWeekStartDate =
+                  assignmentSelections[assignment.restSessionId];
+
+                return (
+                  <View
+                    key={assignment.restSessionId}
+                    style={styles.assignmentCard}
+                  >
+                    <Text style={styles.assignmentMessage}>
+                      {assignment.message}
+                    </Text>
+
+                    <View style={styles.assignmentOptions}>
+                      {assignment.options.map((option) => {
+                        const selected =
+                          selectedWeekStartDate === option.weekStartDate;
+
+                        return (
+                          <Pressable
+                            key={option.weekStartDate}
+                            disabled={savingAssignmentId !== null}
+                            onPress={() => {
+                              setAssignmentSelections((currentSelections) => ({
+                                ...currentSelections,
+                                [assignment.restSessionId]:
+                                  option.weekStartDate,
+                              }));
+
+                              setAssignmentSaveError(null);
+                            }}
+                            style={[
+                              styles.assignmentOption,
+
+                              selected && styles.assignmentOptionSelected,
+
+                              savingAssignmentId !== null &&
+                                styles.assignmentOptionDisabled,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.assignmentOptionWeek,
+
+                                selected && styles.assignmentOptionWeekSelected,
+                              ]}
+                            >
+                              Week {option.isoWeekNumber}, {option.isoYear}
+                            </Text>
+
+                            <Text style={styles.assignmentOptionDates}>
+                              {formatDisplayDate(option.weekStartDate)}
+                              {" – "}
+                              {formatDisplayDate(option.weekEndDate)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+
+                    <Text style={styles.assignmentLockNotice}>
+                      Once confirmed, this assignment is locked in the audit
+                      history and cannot be silently changed.
+                    </Text>
+
+                    <Pressable
+                      disabled={
+                        selectedWeekStartDate === undefined ||
+                        savingAssignmentId !== null
+                      }
+                      onPress={() => {
+                        void lockPendingWeeklyRestAssignment(assignment);
+                      }}
+                      style={[
+                        styles.assignmentConfirmButton,
+
+                        (selectedWeekStartDate === undefined ||
+                          savingAssignmentId !== null) &&
+                          styles.assignmentConfirmButtonDisabled,
+                      ]}
+                    >
+                      <Text style={styles.assignmentConfirmText}>
+                        {savingAssignmentId === assignment.restSessionId
+                          ? "Saving Assignment…"
+                          : "Lock Week Assignment"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                );
+              },
+            )}
+          </View>
+        )}
 
         <View style={styles.weekNavigation}>
           <Pressable style={styles.navButton}>
@@ -1156,6 +1338,128 @@ const styles = StyleSheet.create({
   weekBadgeText: {
     color: "#ffffff",
     fontWeight: "800",
+  },
+
+  assignmentPanel: {
+    backgroundColor: "#101827",
+    borderWidth: 1,
+    borderColor: "#f2b84b",
+    borderRadius: 16,
+    padding: 18,
+    gap: 14,
+  },
+
+  assignmentPanelHeader: {
+    gap: 5,
+  },
+
+  assignmentEyebrow: {
+    color: "#f2b84b",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+
+  assignmentHeading: {
+    color: "#ffffff",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+
+  assignmentDescription: {
+    color: "#a8b6c8",
+    fontSize: 13,
+    lineHeight: 19,
+    maxWidth: 850,
+  },
+
+  assignmentError: {
+    color: "#ff7a7a",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+
+  assignmentCard: {
+    backgroundColor: "#0b1929",
+    borderWidth: 1,
+    borderColor: "#29425d",
+    borderRadius: 14,
+    padding: 15,
+    gap: 12,
+  },
+
+  assignmentMessage: {
+    color: "#d9e6f5",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  assignmentOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+
+  assignmentOption: {
+    flex: 1,
+    minWidth: 220,
+    backgroundColor: "#071321",
+    borderWidth: 1,
+    borderColor: "#29425d",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+
+  assignmentOptionSelected: {
+    backgroundColor: "#0b3150",
+    borderColor: "#38a7ff",
+  },
+
+  assignmentOptionDisabled: {
+    opacity: 0.55,
+  },
+
+  assignmentOptionWeek: {
+    color: "#d9e6f5",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+
+  assignmentOptionWeekSelected: {
+    color: "#70c7ff",
+  },
+
+  assignmentOptionDates: {
+    color: "#8293a8",
+    fontSize: 11,
+    marginTop: 4,
+  },
+
+  assignmentLockNotice: {
+    color: "#f2b84b",
+    fontSize: 11,
+    lineHeight: 17,
+    fontWeight: "700",
+  },
+
+  assignmentConfirmButton: {
+    alignSelf: "flex-start",
+    backgroundColor: "#2189df",
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+  },
+
+  assignmentConfirmButtonDisabled: {
+    backgroundColor: "#29425d",
+    opacity: 0.65,
+  },
+
+  assignmentConfirmText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
   },
 
   weekNavigation: {
