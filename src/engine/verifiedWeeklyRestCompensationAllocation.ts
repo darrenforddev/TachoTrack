@@ -6,7 +6,10 @@ import {
 
 import type { WeeklyRestCompensationEvidence } from "./weeklyRestCompensationEvidence";
 
-import type { CoordinatedWeeklyRestObligation } from "./weeklyRestObligationCoordinator";
+import {
+    synchroniseCoordinatedWeeklyRestObligation,
+    type CoordinatedWeeklyRestObligation,
+} from "./weeklyRestObligationCoordinator";
 
 export type VerifiedAllocationRejectionReason =
   | "evidence-rejected"
@@ -126,11 +129,19 @@ export function allocateVerifiedWeeklyRestCompensation(
     };
   }
 
+  const synchronisedObligation = synchroniseCoordinatedWeeklyRestObligation(
+    allocationResult.obligation as CoordinatedWeeklyRestObligation,
+  );
+
   return {
     status: "allocated",
 
     rejectionReason: null,
 
-    allocationResult,
+    allocationResult: {
+      ...allocationResult,
+
+      obligation: synchronisedObligation,
+    },
   };
 }

@@ -100,6 +100,27 @@ export interface CoordinateWeeklyRestObligationResult {
 
   obligation: CoordinatedWeeklyRestObligation | null;
 }
+export function synchroniseCoordinatedWeeklyRestObligation(
+  obligation: CoordinatedWeeklyRestObligation,
+): CoordinatedWeeklyRestObligation {
+  const hasOutstandingCompensation = obligation.remainingMinutes > 0;
+
+  return {
+    ...obligation,
+
+    requiredMinutes: obligation.requiredCompensationMinutes,
+
+    satisfiedMinutes: obligation.compensatedMinutes,
+
+    deadline: obligation.dueDate,
+
+    overdue: obligation.status === "overdue",
+
+    calendarVisible: hasOutstandingCompensation,
+
+    hasOutstandingCompensation,
+  };
+}
 
 /**
  * --------------------------------------------------
@@ -116,23 +137,6 @@ function timestampAtEndOfDay(date: string): number {
 
 function isAfterDeadline(currentDate: string, deadline: string): boolean {
   return timestampAtStartOfDay(currentDate) > timestampAtEndOfDay(deadline);
-}
-
-/**
- * --------------------------------------------------
- * SATISFIED MINUTES
- * --------------------------------------------------
- *
- * Compensation can never:
- *
- * - be negative
- * - exceed the amount originally owed
- */
-function capSatisfiedMinutes(
-  requestedMinutes: number,
-  requiredMinutes: number,
-): number {
-  return Math.min(requiredMinutes, Math.max(0, requestedMinutes));
 }
 
 /**

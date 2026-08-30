@@ -259,6 +259,22 @@ assert(
   "A rest beginning exactly at the source-rest boundary should be accepted.",
 );
 
+/**
+ * SCENARIO 9
+ * Completed allocation synchronises all
+ * diary compatibility fields.
+ */
+const synchronisedCompletedObligation = validAllocation.allocationResult
+  .obligation as CoordinatedWeeklyRestObligation;
+
+assert(
+  synchronisedCompletedObligation.satisfiedMinutes === 21 * 60 &&
+    synchronisedCompletedObligation.calendarVisible === false &&
+    synchronisedCompletedObligation.hasOutstandingCompensation === false &&
+    synchronisedCompletedObligation.overdue === false,
+  "Completed allocation must synchronise diary compatibility fields.",
+);
+
 console.log(
-  "✓ Verified weekly-rest compensation allocation scenarios passed (8/8)",
+  "✓ Verified weekly-rest compensation allocation scenarios passed (9/9)",
 );
