@@ -241,7 +241,8 @@ scenarios.push(
  * --------------------------------------------------
  */
 const activeDriving = day.activities.find(
-  (activity) => activity.id === "driving-active",
+  (activity) =>
+    activity.id.startsWith("driving-active-") && activity.type === "driving",
 );
 
 scenarios.push(
@@ -282,10 +283,10 @@ scenarios.push(
   result(
     "Live activities are chronological",
 
-    day.activities[0]?.id === "other-work-1" &&
-      day.activities[1]?.id === "driving-1" &&
-      day.activities[2]?.id === "break-1" &&
-      day.activities[3]?.id === "driving-active",
+    day.activities[0]?.start === "2026-08-26T08:00:00.000Z" &&
+      day.activities[1]?.start === "2026-08-26T08:15:00.000Z" &&
+      day.activities[2]?.start === "2026-08-26T09:00:00.000Z" &&
+      day.activities[3]?.start === "2026-08-26T09:30:00.000Z",
 
     `Order: ${day.activities.map((activity) => activity.id).join(" -> ")}`,
   ),
