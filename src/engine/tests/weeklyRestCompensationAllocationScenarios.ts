@@ -1,9 +1,9 @@
 import {
-    allocateRestCompensation,
-    calculateAvailableCompensationMinutes,
-    createCompensationCreatedEvent,
-    createCompensationOverdueEvent,
-    type CompensationRestCandidate,
+  allocateRestCompensation,
+  calculateAvailableCompensationMinutes,
+  createCompensationCreatedEvent,
+  createCompensationOverdueEvent,
+  type CompensationRestCandidate,
 } from "../weeklyRestCompensationAllocation";
 
 import type { WeeklyRestCompensationObligation } from "../weeklyRestCompensation";
@@ -126,15 +126,14 @@ const partialAllocation = allocateRestCompensation(obligation, rest54);
 
 scenarios.push(
   result(
-    "9h compensation applies to 21h obligation",
+    "Insufficient surplus receives no partial credit",
 
-    partialAllocation.allocation?.appliedMinutes === 9 * 60 &&
-      partialAllocation.obligation.remainingMinutes === 12 * 60 &&
-      partialAllocation.obligation.status === "partially-compensated",
+    partialAllocation.allocation === null &&
+      partialAllocation.obligation.compensatedMinutes === 0 &&
+      partialAllocation.obligation.remainingMinutes === 21 * 60 &&
+      partialAllocation.obligation.status === "outstanding",
 
-    `Applied: ${
-      partialAllocation.allocation?.appliedMinutes ?? 0
-    }, remaining: ${partialAllocation.obligation.remainingMinutes}`,
+    `Remaining: ${partialAllocation.obligation.remainingMinutes}`,
   ),
 );
 
@@ -148,11 +147,9 @@ scenarios.push(
  */
 scenarios.push(
   result(
-    "Partial allocation creates audit event",
+    "Rejected partial compensation creates no audit event",
 
-    partialAllocation.events.length === 1 &&
-      partialAllocation.events[0].type === "compensation-applied" &&
-      partialAllocation.events[0].remainingMinutes === 12 * 60,
+    partialAllocation.events.length === 0,
 
     `Events: ${partialAllocation.events.length}`,
   ),
@@ -165,26 +162,26 @@ scenarios.push(
  * Second rest supplies remaining 12h.
  * --------------------------------------------------
  */
-const rest57: CompensationRestCandidate = {
-  id: "rest-57h",
+const rest66: CompensationRestCandidate = {
+  id: "rest-66h",
 
   date: "2026-09-19",
 
-  totalRestMinutes: 57 * 60,
+  totalRestMinutes: 66 * 60,
 
   baseRequiredRestMinutes: 45 * 60,
 };
 
 const completedAllocation = allocateRestCompensation(
   partialAllocation.obligation,
-  rest57,
+  rest66,
 );
 
 scenarios.push(
   result(
-    "Remaining 12h compensation clears obligation",
+    "One continuous 21h surplus clears obligation en bloc",
 
-    completedAllocation.allocation?.appliedMinutes === 12 * 60 &&
+    completedAllocation.allocation?.appliedMinutes === 21 * 60 &&
       completedAllocation.obligation.remainingMinutes === 0 &&
       completedAllocation.obligation.status === "completed",
 
@@ -385,9 +382,109 @@ scenarios.push(
 
     clearedEvent?.sourceWeekNumber === 35 &&
       clearedEvent?.sourceObligationId === obligation.id &&
-      clearedEvent?.allocationRestId === rest57.id,
+      clearedEvent?.allocationRestId === rest66.id,
 
     `Source week: ${clearedEvent?.sourceWeekNumber}`,
+  ),
+);
+/**
+ * --------------------------------------------------
+ * SCENARIO 14
+ *
+ * Compensation cannot attach to a base
+ * rest shorter than nine hours.
+ * --------------------------------------------------
+ */
+const belowMinimumBaseRest: CompensationRestCandidate = {
+  id: "rest-below-9h-base",
+
+  date: "2026-09-10",
+
+  totalRestMinutes: 30 * 60,
+
+  baseRequiredRestMinutes: 8 * 60,
+};
+
+const belowMinimumBaseAllocation = allocateRestCompensation(
+  obligation,
+  belowMinimumBaseRest,
+);
+
+scenarios.push(
+  result(
+    "Base rest below 9h cannot supply compensation",
+
+    calculateAvailableCompensationMinutes(belowMinimumBaseRest) === 0 &&
+      belowMinimumBaseAllocation.allocation === null &&
+      belowMinimumBaseAllocation.events.length === 0,
+
+    `Allocation exists: ${belowMinimumBaseAllocation.allocation !== null}`,
+  ),
+);
+
+/**
+ * --------------------------------------------------
+ * SCENARIO 15
+ *
+ * Compensation completed after its legal
+ * deadline cannot clear the obligation.
+ * --------------------------------------------------
+ */
+const lateRest: CompensationRestCandidate = {
+  id: "rest-after-deadline",
+
+  date: "2026-09-21",
+
+  totalRestMinutes: 66 * 60,
+
+  baseRequiredRestMinutes: 45 * 60,
+};
+
+const lateAllocation = allocateRestCompensation(obligation, lateRest);
+
+scenarios.push(
+  result(
+    "Rest after deadline cannot clear obligation",
+
+    lateAllocation.allocation === null &&
+      lateAllocation.obligation.status === "outstanding" &&
+      lateAllocation.obligation.remainingMinutes === 21 * 60 &&
+      lateAllocation.events.length === 0,
+
+    `Remaining: ${lateAllocation.obligation.remainingMinutes}`,
+  ),
+);
+
+/**
+ * --------------------------------------------------
+ * SCENARIO 16
+ *
+ * Rest before the source week cannot
+ * compensate a later obligation.
+ * --------------------------------------------------
+ */
+const earlyRest: CompensationRestCandidate = {
+  id: "rest-before-source",
+
+  date: "2026-08-29",
+
+  totalRestMinutes: 66 * 60,
+
+  baseRequiredRestMinutes: 45 * 60,
+};
+
+const earlyAllocation = allocateRestCompensation(obligation, earlyRest);
+
+scenarios.push(
+  result(
+    "Rest before source date cannot clear obligation",
+
+    earlyAllocation.allocation === null &&
+      earlyAllocation.obligation.status === "outstanding" &&
+      earlyAllocation.obligation.remainingMinutes === 21 * 60 &&
+      earlyAllocation.events.length === 0,
+
+    `Remaining: ${earlyAllocation.obligation.remainingMinutes}`,
   ),
 );
 

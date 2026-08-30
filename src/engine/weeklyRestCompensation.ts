@@ -239,41 +239,6 @@ export function createWeeklyRestCompensationObligation(
   };
 }
 
-export function applyWeeklyRestCompensation(
-  obligation: WeeklyRestCompensationObligation,
-  compensationMinutes: number,
-): WeeklyRestCompensationObligation {
-  const amountApplied = Math.max(
-    0,
-    Math.min(compensationMinutes, obligation.remainingMinutes),
-  );
-
-  const compensatedMinutes = obligation.compensatedMinutes + amountApplied;
-
-  const remainingMinutes = Math.max(
-    0,
-    obligation.requiredCompensationMinutes - compensatedMinutes,
-  );
-
-  let status: WeeklyRestCompensationStatus = "outstanding";
-
-  if (remainingMinutes === 0) {
-    status = "completed";
-  } else if (compensatedMinutes > 0) {
-    status = "partially-compensated";
-  }
-
-  return {
-    ...obligation,
-
-    compensatedMinutes,
-
-    remainingMinutes,
-
-    status,
-  };
-}
-
 export function getWeeklyRestCompensationStatus(
   obligation: WeeklyRestCompensationObligation,
   currentDate: string,

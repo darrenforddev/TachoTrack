@@ -1,9 +1,9 @@
 import type { WeeklyRestCompensationObligation } from "../weeklyRestCompensation";
 
 import {
-    allocateAcrossWeeklyRestObligations,
-    isMultiAllocationValid,
-    type MultiObligationAllocationResult,
+  allocateAcrossWeeklyRestObligations,
+  isMultiAllocationValid,
+  type MultiObligationAllocationResult,
 } from "../weeklyRestMultiObligationAllocation";
 
 import type { CompensationRestCandidate } from "../weeklyRestCompensationAllocation";
@@ -116,12 +116,12 @@ const week36After12 = findObligation(twelveHours, week36.id);
 
 scenarios.push(
   result(
-    "12h surplus clears oldest 9h debt then applies 3h to next",
+    "12h surplus clears only the complete oldest 9h debt",
 
     week35After12?.remainingMinutes === 0 &&
       week35After12?.status === "completed" &&
-      week36After12?.compensatedMinutes === 3 * 60 &&
-      week36After12?.remainingMinutes === 3 * 60,
+      week36After12?.compensatedMinutes === 0 &&
+      week36After12?.remainingMinutes === 6 * 60,
 
     `Week35 remaining: ${
       week35After12?.remainingMinutes ?? -1
@@ -139,15 +139,15 @@ scenarios.push(
 
 scenarios.push(
   result(
-    "12h surplus is never double counted",
+    "Unused surplus is retained rather than partially credited",
 
     twelveHours.totalAvailableCompensationMinutes === 12 * 60 &&
-      twelveHours.totalAppliedCompensationMinutes === 12 * 60 &&
-      twelveHours.unusedCompensationMinutes === 0,
+      twelveHours.totalAppliedCompensationMinutes === 9 * 60 &&
+      twelveHours.unusedCompensationMinutes === 3 * 60,
 
     `Available: ${twelveHours.totalAvailableCompensationMinutes}, applied: ${
       twelveHours.totalAppliedCompensationMinutes
-    }`,
+    }, unused: ${twelveHours.unusedCompensationMinutes}`,
   ),
 );
 
@@ -203,11 +203,13 @@ const week36After5 = findObligation(fiveHours, week36.id);
 
 scenarios.push(
   result(
-    "5h surplus applies only to oldest obligation",
+    "5h surplus cannot partially satisfy either obligation",
 
-    week35After5?.compensatedMinutes === 5 * 60 &&
-      week35After5?.remainingMinutes === 4 * 60 &&
-      week36After5?.compensatedMinutes === 0,
+    week35After5?.compensatedMinutes === 0 &&
+      week35After5?.remainingMinutes === 9 * 60 &&
+      week36After5?.compensatedMinutes === 0 &&
+      fiveHours.totalAppliedCompensationMinutes === 0 &&
+      fiveHours.unusedCompensationMinutes === 5 * 60,
 
     `Week35 remaining: ${week35After5?.remainingMinutes ?? -1}`,
   ),
@@ -272,11 +274,12 @@ const week36AfterSkip = findObligation(skipCompleted, week36.id);
 
 scenarios.push(
   result(
-    "Completed obligation is skipped",
+    "Completed obligation is skipped without partial credit to the next",
 
-    week36AfterSkip?.compensatedMinutes === 4 * 60 &&
-      week36AfterSkip?.remainingMinutes === 2 * 60 &&
-      skipCompleted.totalAppliedCompensationMinutes === 4 * 60,
+    week36AfterSkip?.compensatedMinutes === 0 &&
+      week36AfterSkip?.remainingMinutes === 6 * 60 &&
+      skipCompleted.totalAppliedCompensationMinutes === 0 &&
+      skipCompleted.unusedCompensationMinutes === 4 * 60,
 
     `Week36 remaining: ${week36AfterSkip?.remainingMinutes ?? -1}`,
   ),
@@ -335,7 +338,10 @@ scenarios.push(
     "Allocation order is deterministic oldest-first",
 
     oldAfterReverse?.remainingMinutes === 0 &&
-      newAfterReverse?.compensatedMinutes === 1 * 60,
+      newAfterReverse?.compensatedMinutes === 0 &&
+      newAfterReverse?.remainingMinutes === 6 * 60 &&
+      reverseInput.totalAppliedCompensationMinutes === 9 * 60 &&
+      reverseInput.unusedCompensationMinutes === 1 * 60,
 
     `Older remaining: ${
       oldAfterReverse?.remainingMinutes ?? -1
@@ -373,17 +379,14 @@ scenarios.push(
 
 scenarios.push(
   result(
-    "Multi allocation preserves per-obligation audit events",
+    "Audit events are created only for fully cleared obligations",
 
-    twelveHours.events.some(
-      (event) =>
-        event.type === "compensation-cleared" && event.sourceWeekNumber === 35,
-    ) &&
+    twelveHours.events.length === 2 &&
+      twelveHours.events.every((event) => event.sourceWeekNumber === 35) &&
       twelveHours.events.some(
-        (event) =>
-          event.type === "compensation-applied" &&
-          event.sourceWeekNumber === 36,
-      ),
+        (event) => event.type === "compensation-applied",
+      ) &&
+      twelveHours.events.some((event) => event.type === "compensation-cleared"),
 
     `Events: ${twelveHours.events
       .map((event) => `${event.sourceWeekNumber}:${event.type}`)

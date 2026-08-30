@@ -1,10 +1,11 @@
 import type { WeeklyRestCompensationObligation } from "./weeklyRestCompensation";
 
 import {
-    allocateRestCompensation,
-    type CompensationAllocation,
-    type CompensationRestCandidate,
-    type RestCompensationCalendarEvent,
+  allocateRestCompensation,
+  calculateAvailableCompensationMinutes,
+  type CompensationAllocation,
+  type CompensationRestCandidate,
+  type RestCompensationCalendarEvent,
 } from "./weeklyRestCompensationAllocation";
 
 export interface MultiObligationAllocationInput {
@@ -60,10 +61,8 @@ export function allocateAcrossWeeklyRestObligations(
 ): MultiObligationAllocationResult {
   const sortedObligations = sortObligationsOldestFirst(input.obligations);
 
-  const totalAvailableCompensationMinutes = Math.max(
-    0,
-    input.rest.totalRestMinutes - input.rest.baseRequiredRestMinutes,
-  );
+  const totalAvailableCompensationMinutes =
+    calculateAvailableCompensationMinutes(input.rest);
 
   let remainingAvailableMinutes = totalAvailableCompensationMinutes;
 

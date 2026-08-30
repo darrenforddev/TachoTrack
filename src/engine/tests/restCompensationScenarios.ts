@@ -1,9 +1,8 @@
 import type { WeeklyRestCompensationObligation } from "../weeklyRestCompensation";
 
 import {
-    applyWeeklyRestCompensation,
-    createWeeklyRestCompensationObligation,
-    evaluateWeeklyRestCompensation,
+  createWeeklyRestCompensationObligation,
+  evaluateWeeklyRestCompensation,
 } from "../weeklyRestCompensation";
 
 type ScenarioResult = {
@@ -122,76 +121,12 @@ results.push(
 );
 
 /**
- * --------------------------------------------------
- * SCENARIO 5
- * Partial compensation.
- *
- * Start with 21h outstanding.
- * Apply 10h.
- * 11h should remain.
- * --------------------------------------------------
+ * Direct numeric compensation has been removed.
+ * Compensation is now applied only through the
+ * verified continuous-rest allocation engine.
  */
 const originalObligation =
   reduced24.obligation as WeeklyRestCompensationObligation;
-
-const partiallyCompensated = applyWeeklyRestCompensation(
-  originalObligation,
-  10 * 60,
-);
-
-results.push(
-  passFail(
-    partiallyCompensated.status === "partially-compensated" &&
-      partiallyCompensated.compensatedMinutes === 10 * 60 &&
-      partiallyCompensated.remainingMinutes === 11 * 60,
-    "Partial compensation leaves correct balance",
-    `Remaining: ${partiallyCompensated.remainingMinutes} minutes`,
-  ),
-);
-
-/**
- * --------------------------------------------------
- * SCENARIO 6
- * Complete compensation.
- *
- * Apply remaining 11h.
- * --------------------------------------------------
- */
-const fullyCompensated = applyWeeklyRestCompensation(
-  partiallyCompensated,
-  11 * 60,
-);
-
-results.push(
-  passFail(
-    fullyCompensated.status === "completed" &&
-      fullyCompensated.remainingMinutes === 0,
-    "Full compensation completes obligation",
-    `Status: ${fullyCompensated.status}`,
-  ),
-);
-
-/**
- * --------------------------------------------------
- * SCENARIO 7
- * Overpayment should not create
- * a negative remaining balance.
- * --------------------------------------------------
- */
-const overCompensated = applyWeeklyRestCompensation(
-  originalObligation,
-  30 * 60,
-);
-
-results.push(
-  passFail(
-    overCompensated.remainingMinutes === 0 &&
-      overCompensated.compensatedMinutes === 21 * 60 &&
-      overCompensated.status === "completed",
-    "Compensation cannot exceed obligation",
-    `Compensated: ${overCompensated.compensatedMinutes} minutes`,
-  ),
-);
 
 /**
  * --------------------------------------------------
@@ -220,8 +155,18 @@ results.push(
  * stays good even after deadline.
  * --------------------------------------------------
  */
+const verifiedCompletedObligation: WeeklyRestCompensationObligation = {
+  ...originalObligation,
+
+  compensatedMinutes: originalObligation.requiredCompensationMinutes,
+
+  remainingMinutes: 0,
+
+  status: "completed",
+};
+
 const completedAfterDeadline = evaluateWeeklyRestCompensation(
-  fullyCompensated,
+  verifiedCompletedObligation,
   "2026-10-01",
 );
 
@@ -229,7 +174,7 @@ results.push(
   passFail(
     completedAfterDeadline.level === "good" &&
       completedAfterDeadline.obligation?.status === "completed",
-    "Completed compensation remains compliant after deadline",
+    "Verified completed compensation remains compliant after deadline",
     `Level: ${completedAfterDeadline.level}`,
   ),
 );
@@ -252,28 +197,6 @@ results.push(
     overdue.level === "breach" && overdue.obligation?.status === "overdue",
     "Outstanding compensation becomes overdue",
     `Status: ${overdue.obligation?.status}`,
-  ),
-);
-
-/**
- * --------------------------------------------------
- * SCENARIO 11
- * Partial compensation can also
- * become overdue.
- * --------------------------------------------------
- */
-const partialOverdue = evaluateWeeklyRestCompensation(
-  partiallyCompensated,
-  "2026-10-01",
-);
-
-results.push(
-  passFail(
-    partialOverdue.level === "breach" &&
-      partialOverdue.obligation?.status === "overdue" &&
-      partialOverdue.obligation?.remainingMinutes === 11 * 60,
-    "Partially compensated balance becomes overdue",
-    `Remaining: ${partialOverdue.obligation?.remainingMinutes ?? 0} minutes`,
   ),
 );
 

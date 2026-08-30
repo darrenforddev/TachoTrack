@@ -1,11 +1,11 @@
 import {
-    createCompensationObligation,
-    type WeeklyRestRecord,
+  createCompensationObligation,
+  type WeeklyRestRecord,
 } from "./weeklyRestHistory";
 
 import {
-    calculateCompensationDueDate,
-    type WeeklyRestCompensationObligation,
+  calculateCompensationDueDate,
+  type WeeklyRestCompensationObligation,
 } from "./weeklyRestCompensation";
 
 /**
@@ -41,10 +41,11 @@ export interface CoordinateWeeklyRestObligationInput {
   currentDate: string;
 
   /**
-   * Amount of compensation already
-   * satisfied.
+   * @deprecated Compatibility input only.
    *
-   * Defaults to zero.
+   * This value is deliberately ignored because
+   * compensation must be verified from one
+   * qualifying continuous rest allocation.
    */
   satisfiedMinutes?: number;
 }
@@ -215,15 +216,16 @@ export function coordinateWeeklyRestObligation(
    * COMPENSATION ALREADY MADE
    * ------------------------------------------------
    */
-  const compensatedMinutes = capSatisfiedMinutes(
-    input.satisfiedMinutes ?? 0,
-    requiredCompensationMinutes,
-  );
+  /**
+   * The coordinator creates obligations only.
+   *
+   * It must never manufacture legal compensation
+   * from an unsupported numeric input. Verified
+   * compensation is applied by the allocation engine.
+   */
+  const compensatedMinutes = 0;
 
-  const remainingMinutes = Math.max(
-    0,
-    requiredCompensationMinutes - compensatedMinutes,
-  );
+  const remainingMinutes = requiredCompensationMinutes;
 
   /**
    * ------------------------------------------------
@@ -243,17 +245,9 @@ export function coordinateWeeklyRestObligation(
    * CANONICAL STATUS
    * ------------------------------------------------
    */
-  let status: WeeklyRestCompensationObligation["status"];
-
-  if (remainingMinutes === 0) {
-    status = "completed";
-  } else if (overdue) {
-    status = "overdue";
-  } else if (compensatedMinutes > 0) {
-    status = "partially-compensated";
-  } else {
-    status = "outstanding";
-  }
+  const status: WeeklyRestCompensationObligation["status"] = overdue
+    ? "overdue"
+    : "outstanding";
 
   const hasOutstandingCompensation = remainingMinutes > 0;
 

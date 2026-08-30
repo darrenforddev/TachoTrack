@@ -151,11 +151,12 @@ const partial = coordinateWeeklyRestObligation({
 
 scenarios.push(
   result(
-    "Partial compensation leaves correct balance",
+    "Unsupported partial minutes are ignored",
 
-    partial.obligation?.status === "partially-compensated" &&
-      partial.obligation?.satisfiedMinutes === 10 * 60 &&
-      partial.obligation?.remainingMinutes === 11 * 60,
+    partial.obligation?.status === "outstanding" &&
+      partial.obligation?.satisfiedMinutes === 0 &&
+      partial.obligation?.compensatedMinutes === 0 &&
+      partial.obligation?.remainingMinutes === 21 * 60,
 
     `Satisfied: ${partial.obligation?.satisfiedMinutes ?? 0}, remaining: ${
       partial.obligation?.remainingMinutes ?? 0
@@ -164,16 +165,16 @@ scenarios.push(
 );
 
 /**
- * --------------------------------------------------
+ * ---------------------------------------------------------
  * SCENARIO 5
  *
- * Partial obligation stays visible.
- * --------------------------------------------------
+ * Ignored partial input leaves obligation calendar-visible
+ * ---------------------------------------------------------
  */
 
 scenarios.push(
   result(
-    "Partial obligation stays calendar-visible",
+    "Ignored partial input leaves obligation calendar-visible",
 
     partial.obligation?.calendarVisible === true &&
       partial.obligation?.hasOutstandingCompensation === true,
@@ -204,11 +205,12 @@ const completed = coordinateWeeklyRestObligation({
 
 scenarios.push(
   result(
-    "Full compensation satisfies obligation",
+    "Unsupported full-payment number cannot complete obligation",
 
-    completed.obligation?.status === "completed" &&
-      completed.obligation?.remainingMinutes === 0 &&
-      completed.obligation?.satisfiedMinutes === 21 * 60,
+    completed.obligation?.status === "outstanding" &&
+      completed.obligation?.remainingMinutes === 21 * 60 &&
+      completed.obligation?.satisfiedMinutes === 0 &&
+      completed.obligation?.compensatedMinutes === 0,
 
     `Status: ${completed.obligation?.status}`,
   ),
@@ -225,10 +227,10 @@ scenarios.push(
 
 scenarios.push(
   result(
-    "Satisfied obligation no longer needs active calendar warning",
+    "Unsupported payment number cannot hide active warning",
 
-    completed.obligation?.calendarVisible === false &&
-      completed.obligation?.hasOutstandingCompensation === false,
+    completed.obligation?.calendarVisible === true &&
+      completed.obligation?.hasOutstandingCompensation === true,
 
     `Visible: ${completed.obligation?.calendarVisible}`,
   ),
@@ -308,10 +310,12 @@ const partialOverdue = coordinateWeeklyRestObligation({
 
 scenarios.push(
   result(
-    "Partially compensated obligation can become overdue",
+    "Unsupported partial minutes cannot reduce overdue debt",
 
     partialOverdue.obligation?.status === "overdue" &&
-      partialOverdue.obligation?.remainingMinutes === 11 * 60 &&
+      partialOverdue.obligation?.satisfiedMinutes === 0 &&
+      partialOverdue.obligation?.compensatedMinutes === 0 &&
+      partialOverdue.obligation?.remainingMinutes === 21 * 60 &&
       partialOverdue.obligation?.overdue === true,
 
     `Remaining: ${partialOverdue.obligation?.remainingMinutes ?? 0}`,
@@ -426,11 +430,12 @@ const overpayment = coordinateWeeklyRestObligation({
 
 scenarios.push(
   result(
-    "Coordinator caps compensation at amount owed",
+    "Unsupported overpayment number is ignored",
 
-    overpayment.obligation?.satisfiedMinutes === 21 * 60 &&
-      overpayment.obligation?.remainingMinutes === 0 &&
-      overpayment.obligation?.status === "completed",
+    overpayment.obligation?.satisfiedMinutes === 0 &&
+      overpayment.obligation?.compensatedMinutes === 0 &&
+      overpayment.obligation?.remainingMinutes === 21 * 60 &&
+      overpayment.obligation?.status === "outstanding",
 
     `Satisfied: ${overpayment.obligation?.satisfiedMinutes ?? 0}`,
   ),

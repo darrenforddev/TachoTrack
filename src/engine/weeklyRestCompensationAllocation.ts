@@ -100,6 +100,10 @@ export interface CompensationAllocationResult {
   events: RestCompensationCalendarEvent[];
 }
 
+export const WEEKLY_REST_COMPENSATION_ALLOCATION_LIMITS = {
+  minimumAttachedRestMinutes: 9 * 60,
+} as const;
+
 /**
  * --------------------------------------------------
  * AVAILABLE EXTRA REST
@@ -115,7 +119,18 @@ export interface CompensationAllocationResult {
 export function calculateAvailableCompensationMinutes(
   rest: CompensationRestCandidate,
 ): number {
-  return Math.max(0, rest.totalRestMinutes - rest.baseRequiredRestMinutes);
+  if (
+    rest.baseRequiredRestMinutes <
+    WEEKLY_REST_COMPENSATION_ALLOCATION_LIMITS.minimumAttachedRestMinutes
+  ) {
+    return 0;
+  }
+
+  if (rest.totalRestMinutes < rest.baseRequiredRestMinutes) {
+    return 0;
+  }
+
+  return rest.totalRestMinutes - rest.baseRequiredRestMinutes;
 }
 
 /**
@@ -153,6 +168,24 @@ export function createCompensationCreatedEvent(
   };
 }
 
+function isRestDateWithinObligationWindow(
+  obligation: WeeklyRestCompensationObligation,
+  rest: CompensationRestCandidate,
+): boolean {
+  const restDate = new Date(`${rest.date}T12:00:00`).getTime();
+
+  const sourceDate = new Date(`${obligation.sourceDate}T12:00:00`).getTime();
+
+  const dueDate = new Date(`${obligation.dueDate}T12:00:00`).getTime();
+
+  return (
+    Number.isFinite(restDate) &&
+    Number.isFinite(sourceDate) &&
+    Number.isFinite(dueDate) &&
+    restDate >= sourceDate &&
+    restDate <= dueDate
+  );
+}
 /**
  * --------------------------------------------------
  * APPLY QUALIFYING REST TO AN OBLIGATION
@@ -174,10 +207,15 @@ export function allocateRestCompensation(
 ): CompensationAllocationResult {
   const events: RestCompensationCalendarEvent[] = [];
 
-  /**
-   * Nothing left to satisfy.
-   */
   if (obligation.remainingMinutes <= 0 || obligation.status === "completed") {
+    return {
+      obligation,
+      allocation: null,
+      events,
+    };
+  }
+
+  if (!isRestDateWithinObligationWindow(obligation, rest)) {
     return {
       obligation,
       allocation: null,
@@ -189,9 +227,16 @@ export function allocateRestCompensation(
     calculateAvailableCompensationMinutes(rest);
 
   /**
-   * No qualifying surplus rest.
+   * Compensation must satisfy the complete
+   * original obligation in one continuous block.
+   *
+   * Insufficient surplus receives no partial
+   * legal credit.
    */
-  if (availableCompensationMinutes <= 0) {
+  if (
+    obligation.requiredCompensationMinutes <= 0 ||
+    availableCompensationMinutes < obligation.requiredCompensationMinutes
+  ) {
     return {
       obligation,
       allocation: null,
@@ -199,28 +244,16 @@ export function allocateRestCompensation(
     };
   }
 
-  const appliedMinutes = Math.min(
-    availableCompensationMinutes,
-    obligation.remainingMinutes,
-  );
-
-  const compensatedMinutes = obligation.compensatedMinutes + appliedMinutes;
-
-  const remainingMinutes = Math.max(
-    0,
-    obligation.requiredCompensationMinutes - compensatedMinutes,
-  );
-
-  const completed = remainingMinutes === 0;
+  const appliedMinutes = obligation.requiredCompensationMinutes;
 
   const updatedObligation: WeeklyRestCompensationObligation = {
     ...obligation,
 
-    compensatedMinutes,
+    compensatedMinutes: obligation.requiredCompensationMinutes,
 
-    remainingMinutes,
+    remainingMinutes: 0,
 
-    status: completed ? "completed" : "partially-compensated",
+    status: "completed",
   };
 
   const allocation: CompensationAllocation = {
@@ -238,14 +271,9 @@ export function allocateRestCompensation(
 
     appliedMinutes,
 
-    remainingMinutesAfter: remainingMinutes,
+    remainingMinutesAfter: 0,
   };
 
-  /**
-   * ------------------------------------------------
-   * COMPENSATION APPLIED EVENT
-   * ------------------------------------------------
-   */
   events.push({
     id: `${allocation.id}-applied`,
 
@@ -263,46 +291,38 @@ export function allocateRestCompensation(
 
     minutes: appliedMinutes,
 
-    remainingMinutes: remainingMinutes,
+    remainingMinutes: 0,
 
     message:
       `${appliedMinutes} minutes of weekly-rest ` +
-      `compensation were applied from rest ${rest.id}. ` +
-      `${remainingMinutes} minutes remain. ` +
+      `compensation were applied en bloc from rest ${rest.id}. ` +
       `Original deadline: ${obligation.dueDate}.`,
   });
 
-  /**
-   * ------------------------------------------------
-   * COMPENSATION CLEARED EVENT
-   * ------------------------------------------------
-   */
-  if (completed) {
-    events.push({
-      id: `${allocation.id}-cleared`,
+  events.push({
+    id: `${allocation.id}-cleared`,
 
-      type: "compensation-cleared",
+    type: "compensation-cleared",
 
-      date: rest.date,
+    date: rest.date,
 
-      deadline: obligation.dueDate,
+    deadline: obligation.dueDate,
 
-      sourceWeekNumber: obligation.sourceWeekNumber,
+    sourceWeekNumber: obligation.sourceWeekNumber,
 
-      sourceObligationId: obligation.id,
+    sourceObligationId: obligation.id,
 
-      allocationRestId: rest.id,
+    allocationRestId: rest.id,
 
-      minutes: appliedMinutes,
+    minutes: appliedMinutes,
 
-      remainingMinutes: 0,
+    remainingMinutes: 0,
 
-      message:
-        `Weekly-rest compensation from Week ` +
-        `${obligation.sourceWeekNumber} was fully cleared. ` +
-        `Original deadline: ${obligation.dueDate}.`,
-    });
-  }
+    message:
+      `Weekly-rest compensation from Week ` +
+      `${obligation.sourceWeekNumber} was fully cleared en bloc. ` +
+      `Original deadline: ${obligation.dueDate}.`,
+  });
 
   return {
     obligation: updatedObligation,
