@@ -25,6 +25,28 @@ export interface ComplianceNetworkLineDefinition {
   order: number;
 }
 
+export type ComplianceNetworkTimerState =
+  | "protected"
+  | "safety-buffer"
+  | "cleared"
+  | "interrupted";
+
+export interface ComplianceNetworkTimer {
+  id: string;
+  kind: "rest";
+  state: ComplianceNetworkTimerState;
+  startedAt: string;
+  legalCompleteAt: string;
+  recommendedResumeAt: string;
+  totalRequiredMinutes: number;
+  elapsedMinutes: number;
+  remainingToLegalMinutes: number;
+  remainingToRecommendedMinutes: number;
+  legallyComplete: boolean;
+  recommendedResumeReached: boolean;
+  display: string;
+}
+
 export interface ComplianceNetworkEvidenceEvent {
   id: string;
   occurredAt: string;
@@ -33,6 +55,7 @@ export interface ComplianceNetworkEvidenceEvent {
   severity: ComplianceNetworkSeverity;
   lineIds: ComplianceNetworkLineId[];
   sourceIds?: string[];
+  timers?: ComplianceNetworkTimer[];
 }
 
 export interface ComplianceNetworkStation {
@@ -45,6 +68,7 @@ export interface ComplianceNetworkStation {
   lineIds: ComplianceNetworkLineId[];
   eventIds: string[];
   sourceIds: string[];
+  timers: ComplianceNetworkTimer[];
   isInterchange: boolean;
 }
 
@@ -275,6 +299,7 @@ export function buildComplianceNetworkMap(
       const sourceIds = uniqueSorted(
         events.flatMap((event) => event.sourceIds ?? []),
       );
+      const timers = events.flatMap((event) => event.timers ?? []);
       const occurredAtMilliseconds = new Date(occurredAt).getTime();
 
       return {
@@ -291,6 +316,7 @@ export function buildComplianceNetworkMap(
         lineIds,
         eventIds: stationEventIds,
         sourceIds,
+        timers,
         isInterchange: lineIds.length > 1,
       };
     },
