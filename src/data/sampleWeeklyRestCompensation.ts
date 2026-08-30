@@ -1,54 +1,61 @@
+import type { RestSession } from "./restSession";
+
 import { createWeeklyRestRecord } from "../engine/weeklyRestHistory";
 
-import { coordinateWeeklyRestObligation } from "../engine/weeklyRestObligationCoordinator";
+import {
+  coordinateWeeklyRestObligation,
+  type CoordinatedWeeklyRestObligation,
+} from "../engine/weeklyRestObligationCoordinator";
 
 import {
-    allocateRestCompensation,
-    createCompensationCreatedEvent,
-    type RestCompensationCalendarEvent,
+  createCompensationCreatedEvent,
+  type RestCompensationCalendarEvent,
 } from "../engine/weeklyRestCompensationAllocation";
 
-/**
- * --------------------------------------------------
- * WEEK 35 WEEKLY REST
- * --------------------------------------------------
- *
- * Start:
- * 29 Aug 2026 12:00
- *
- * End:
- * 30 Aug 2026 12:00
- *
- * Total:
- * 24h
- *
- * Regular weekly rest:
- * 45h
- *
- * Compensation created:
- * 21h
- */
-const week35WeeklyRest = createWeeklyRestRecord(
-  "week-35-weekly-rest",
-  "2026-08-29T12:00:00",
-  "2026-08-30T12:00:00",
-);
+import { evaluateWeeklyRestCompensationEvidence } from "../engine/weeklyRestCompensationEvidence";
 
-if (!week35WeeklyRest) {
-  throw new Error("Week 35 weekly rest could not be classified.");
+import { allocateVerifiedWeeklyRestCompensation } from "../engine/verifiedWeeklyRestCompensationAllocation";
+
+function createCompletedWeeklyRestSession(
+  id: string,
+  startedAt: string,
+  endedAt: string,
+): RestSession {
+  const startTimestamp = new Date(startedAt).getTime();
+
+  const endTimestamp = new Date(endedAt).getTime();
+
+  return {
+    id,
+
+    type: "weekly",
+
+    startedAt,
+
+    endedAt,
+
+    durationMilliseconds: endTimestamp - startTimestamp,
+
+    status: "completed",
+  };
 }
 
 /**
- * --------------------------------------------------
- * COORDINATE WEEK 35 OBLIGATION
- * --------------------------------------------------
+ * Week 35:
  *
- * The coordinator now returns the canonical
- * WeeklyRestCompensationObligation shape.
- *
- * No adapter is needed between coordinator
- * and allocation engine.
+ * A completed 24-hour reduced weekly rest
+ * creates 21 hours of compensation.
  */
+const week35WeeklyRest = createWeeklyRestRecord(
+  "week-35-weekly-rest",
+  "2026-08-29T12:00:00.000Z",
+  "2026-08-30T12:00:00.000Z",
+);
+
+if (week35WeeklyRest === null) {
+  throw new Error("Week 35 weekly rest could not be classified.");
+}
+
 const coordinatedWeek35 = coordinateWeeklyRestObligation({
   weeklyRest: week35WeeklyRest,
 
@@ -57,121 +64,86 @@ const coordinatedWeek35 = coordinateWeeklyRestObligation({
   sourceWeekReferenceDate: "2026-08-30",
 
   currentDate: "2026-08-30",
-
-  satisfiedMinutes: 0,
 });
 
-if (!coordinatedWeek35.hasObligation || !coordinatedWeek35.obligation) {
+if (!coordinatedWeek35.hasObligation || coordinatedWeek35.obligation === null) {
   throw new Error(
     "Week 35 should have created a weekly-rest compensation obligation.",
   );
 }
 
-/**
- * --------------------------------------------------
- * CANONICAL INITIAL OBLIGATION
- * --------------------------------------------------
- *
- * This comes directly from the coordinator.
- */
 const initialObligation = coordinatedWeek35.obligation;
 
-/**
- * --------------------------------------------------
- * EVENT 1
- * COMPENSATION CREATED
- * --------------------------------------------------
- */
 const createdEvent = createCompensationCreatedEvent(initialObligation);
 
 /**
- * --------------------------------------------------
- * FIRST QUALIFYING REST
- * --------------------------------------------------
+ * First completed weekly rest:
  *
- * 12 Sep 2026
+ * 51 hours total
+ * 45-hour regular weekly-rest base
+ * 6-hour surplus
  *
- * Total rest:
- * 51h
- *
- * Base requirement:
- * 45h
- *
- * Surplus:
- * 6h
- *
- * 21h owed
- * - 6h applied
- * = 15h remaining
+ * This is verified evidence, but it cannot
+ * partially satisfy the 21-hour obligation.
  */
-const firstAllocation = allocateRestCompensation(initialObligation, {
-  id: "rest-2026-09-12",
+const firstRestSession = createCompletedWeeklyRestSession(
+  "rest-2026-09-12",
+  "2026-09-10T09:00:00.000Z",
+  "2026-09-12T12:00:00.000Z",
+);
 
-  date: "2026-09-12",
+const firstEvidence = evaluateWeeklyRestCompensationEvidence(firstRestSession);
 
-  totalRestMinutes: 51 * 60,
+const firstAllocation = allocateVerifiedWeeklyRestCompensation(
+  initialObligation,
+  firstEvidence,
+);
 
-  baseRequiredRestMinutes: 45 * 60,
-});
+const obligationAfterFirst = firstAllocation.allocationResult
+  .obligation as CoordinatedWeeklyRestObligation;
 
 /**
- * --------------------------------------------------
- * SECOND QUALIFYING REST
- * --------------------------------------------------
+ * Second completed weekly rest:
  *
- * 19 Sep 2026
+ * 66 hours total
+ * 45-hour regular weekly-rest base
+ * 21-hour continuous surplus
  *
- * Total rest:
- * 60h
- *
- * Base requirement:
- * 45h
- *
- * Surplus:
- * 15h
- *
- * 15h remaining
- * - 15h applied
- * = 0h
- *
- * Obligation cleared before deadline.
+ * This clears the complete obligation en bloc
+ * before the legal deadline.
  */
-const secondAllocation = allocateRestCompensation(firstAllocation.obligation, {
-  id: "rest-2026-09-19",
+const secondRestSession = createCompletedWeeklyRestSession(
+  "rest-2026-09-19",
+  "2026-09-16T09:00:00.000Z",
+  "2026-09-19T03:00:00.000Z",
+);
 
-  date: "2026-09-19",
+const secondEvidence =
+  evaluateWeeklyRestCompensationEvidence(secondRestSession);
 
-  totalRestMinutes: 60 * 60,
+const secondAllocation = allocateVerifiedWeeklyRestCompensation(
+  obligationAfterFirst,
+  secondEvidence,
+);
 
-  baseRequiredRestMinutes: 45 * 60,
-});
-
-/**
- * --------------------------------------------------
- * COMPLETE ENGINE-GENERATED AUDIT HISTORY
- * --------------------------------------------------
- */
 export const sampleWeeklyRestCompensationEvents: RestCompensationCalendarEvent[] =
-  [createdEvent, ...firstAllocation.events, ...secondAllocation.events];
+  [
+    createdEvent,
 
-/**
- * --------------------------------------------------
- * FINAL OBLIGATION
- * --------------------------------------------------
- */
+    ...firstAllocation.allocationResult.events,
+
+    ...secondAllocation.allocationResult.events,
+  ];
+
 export const sampleWeeklyRestCompensationFinalObligation =
-  secondAllocation.obligation;
+  secondAllocation.allocationResult.obligation;
 
-/**
- * --------------------------------------------------
- * SOURCE WEEKLY REST
- * --------------------------------------------------
- */
+export const sampleWeeklyRestCompensationEvidence = [
+  firstEvidence,
+
+  secondEvidence,
+];
+
 export const sampleWeek35WeeklyRest = week35WeeklyRest;
 
-/**
- * --------------------------------------------------
- * ORIGINAL COORDINATED OBLIGATION
- * --------------------------------------------------
- */
 export const sampleWeek35CoordinatedObligation = coordinatedWeek35.obligation;
