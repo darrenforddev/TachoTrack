@@ -10,6 +10,16 @@ import { loadFortnightlyDriverHistory } from "../../data/weeklyDriverHistoryStor
 
 import { calculateFortnightlyDrivingState } from "../../engine/fortnightlyDrivingState";
 
+import type { RestSession } from "../../data/restSession";
+
+import { loadRestSessionState } from "../../data/restSessionStorage";
+
+import { loadWeeklyRestAssignmentDecisions } from "../../data/weeklyRestWeekAssignmentStorage";
+
+import { buildWeeklyRestCompensationTimeline } from "../../engine/weeklyRestCompensationTimeline";
+
+import type { WeeklyRestWeekAssignmentDecision } from "../../engine/weeklyRestWeekAssignmentDecision";
+
 import {
   Pressable,
   SafeAreaView,
@@ -21,8 +31,6 @@ import {
 
 import { sampleWeek } from "../../data/sampleWeek";
 import { sampleComplianceResult } from "../../data/testCompliance";
-
-import { sampleWeeklyRestCompensationEvents } from "../../data/sampleWeeklyRestCompensation";
 
 import {
   getCalendarEventBadge,
@@ -67,19 +75,6 @@ function formatDisplayDate(dateString?: string) {
 }
 
 const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-/**
- * --------------------------------------------------
- * ENGINE-GENERATED COMPENSATION EVENTS
- * --------------------------------------------------
- *
- * These events are produced by the real
- * weekly-rest compensation allocation engine
- * in sampleWeeklyRestCompensation.ts.
- */
-const weeklyCalendarEvents = toCalendarComplianceEvents(
-  sampleWeeklyRestCompensationEvents,
-);
 
 /**
  * --------------------------------------------------
@@ -242,6 +237,35 @@ export default function WeeklyDiaryScreen() {
     };
   }, []);
 
+  const [restSessions, setRestSessions] = useState<RestSession[]>([]);
+
+  const [weeklyRestAssignmentDecisions, setWeeklyRestAssignmentDecisions] =
+    useState<WeeklyRestWeekAssignmentDecision[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateWeeklyRestCompensation() {
+      const [storedRestState, storedAssignments] = await Promise.all([
+        loadRestSessionState(),
+        loadWeeklyRestAssignmentDecisions(),
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      setRestSessions(storedRestState.sessions);
+      setWeeklyRestAssignmentDecisions(storedAssignments.decisions);
+    }
+
+    void hydrateWeeklyRestCompensation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const fortnightlyDrivingState = useMemo(
     () =>
       calculateFortnightlyDrivingState(
@@ -250,32 +274,45 @@ export default function WeeklyDiaryScreen() {
       ),
     [fortnightlyHistory.previousWeek.days, fortnightlyHistory.currentWeek.days],
   );
+
   const [selectedCompensationEvent, setSelectedCompensationEvent] =
     useState<CalendarComplianceEvent | null>(null);
 
-  /**
-   * ------------------------------------------------
-   * DYNAMIC AUDIT HISTORY
-   * ------------------------------------------------
-   */
+  const currentDate = useMemo(() => {
+    const now = new Date();
+
+    const year = now.getFullYear();
+    const month = `${now.getMonth() + 1}`.padStart(2, "0");
+    const day = `${now.getDate()}`.padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }, []);
+
+  const weeklyRestCompensationTimeline = useMemo(
+    () =>
+      buildWeeklyRestCompensationTimeline(
+        restSessions,
+        weeklyRestAssignmentDecisions,
+        currentDate,
+      ),
+    [restSessions, weeklyRestAssignmentDecisions, currentDate],
+  );
+
+  const weeklyCalendarEvents = useMemo(
+    () => toCalendarComplianceEvents(weeklyRestCompensationTimeline.events),
+    [weeklyRestCompensationTimeline.events],
+  );
+
   const selectedAuditHistory = selectedCompensationEvent
     ? buildRestCompensationAuditHistory(
-        sampleWeeklyRestCompensationEvents,
+        weeklyRestCompensationTimeline.events,
         selectedCompensationEvent.sourceObligationId,
       )
     : [];
 
-  /**
-   * ------------------------------------------------
-   * CURRENT OBLIGATION STATE
-   * ------------------------------------------------
-   *
-   * This is the latest truth across all
-   * events belonging to the obligation.
-   */
   const selectedCurrentState = selectedCompensationEvent
     ? buildRestCompensationCurrentState(
-        sampleWeeklyRestCompensationEvents,
+        weeklyRestCompensationTimeline.events,
         selectedCompensationEvent.sourceObligationId,
       )
     : null;
