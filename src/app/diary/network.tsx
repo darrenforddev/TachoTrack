@@ -13,8 +13,8 @@ import {
 import Svg, {
   Circle,
   G,
-  Rect,
   Line as SvgLine,
+  Rect,
   Text as SvgText,
 } from "react-native-svg";
 
@@ -45,6 +45,12 @@ import {
   type ComplianceNetworkTimer,
 } from "../../engine/complianceNetworkMap";
 import { buildLiveDayComplianceNetworkMap } from "../../engine/liveDayComplianceNetworkMap";
+import type { LiveDayComplianceNetworkStates } from "../../engine/liveDayComplianceNetworkMap";
+import {
+  evaluateLongRunningActivityGuard,
+  type LongRunningActivityConfirmation,
+} from "../../engine/longRunningActivityGuard";
+import type { DriverDay } from "../../engine/types";
 
 const MINUTE_MILLISECONDS = 60 * 1000;
 const DAY_MILLISECONDS = 24 * 60 * MINUTE_MILLISECONDS;
@@ -71,6 +77,14 @@ const SEVERITY_COLOURS: Record<ComplianceNetworkSeverity, string> = {
   breach: "#ef4444",
 };
 
+const ACTIVITY_COLOURS = {
+  driving: "#ef4444",
+  break: "#22c55e",
+  otherWork: "#38bdf8",
+  poa: "#a855f7",
+  rest: "#14b8a6",
+} as const;
+
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -84,6 +98,41 @@ function formatClock(timestamp: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatMinutes(minutes: number): string {
+  const safeMinutes = Math.max(0, Math.floor(minutes));
+  const hours = Math.floor(safeMinutes / 60);
+  const remainingMinutes = safeMinutes % 60;
+
+  if (hours === 0) {
+    return `${remainingMinutes}m`;
+  }
+
+  return `${hours}h ${String(remainingMinutes).padStart(2, "0")}m`;
+}
+
+function clampPercentage(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function percentageDimension(value: number): `${number}%` {
+  return `${clampPercentage(value)}%`;
+}
+
+function getActivityLabel(type: DriverDay["activities"][number]["type"]): string {
+  switch (type) {
+    case "driving":
+      return "Driving";
+    case "break":
+      return "Break";
+    case "otherWork":
+      return "Other Work";
+    case "poa":
+      return "POA";
+    case "rest":
+      return "Rest";
+  }
 }
 
 function formatDateHeading(timestamp: number): string {
@@ -165,6 +214,9 @@ export default function ComplianceNetworkScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState(false);
+  const [mapView, setMapView] = useState<"hybrid" | "network">("hybrid");
+  const [activityConfirmation, setActivityConfirmation] =
+    useState<LongRunningActivityConfirmation | null>(null);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(
     null,
   );
@@ -199,7 +251,8 @@ export default function ComplianceNetworkScreen() {
   }, [hydrate]);
 
   const displayedHistory = useMemo(
-    () => (demoMode ? createSampleComplianceNetworkActivityHistory() : history),
+    () =>
+      demoMode ? createSampleComplianceNetworkActivityHistory() : history,
     [demoMode, history],
   );
 
@@ -211,6 +264,27 @@ export default function ComplianceNetworkScreen() {
   const displayedNowMilliseconds = demoMode
     ? new Date(SAMPLE_COMPLIANCE_NETWORK_NOW).getTime()
     : nowMilliseconds;
+
+  const longRunningGuard = useMemo(() => {
+    try {
+      return evaluateLongRunningActivityGuard(
+        displayedHistory,
+        displayedRestState,
+        displayedNowMilliseconds,
+        {
+          confirmation: demoMode ? null : activityConfirmation,
+        },
+      );
+    } catch {
+      return null;
+    }
+  }, [
+    activityConfirmation,
+    demoMode,
+    displayedHistory,
+    displayedNowMilliseconds,
+    displayedRestState,
+  ]);
 
   const calculation = useMemo(() => {
     try {
@@ -282,12 +356,14 @@ export default function ComplianceNetworkScreen() {
         value,
         error: null,
         dayEvents,
+        day,
       };
     } catch (error) {
       return {
         value: null,
         error: getErrorMessage(error),
         dayEvents: [] as ActivityHistoryEvent[],
+        day: null,
       };
     }
   }, [
@@ -304,13 +380,15 @@ export default function ComplianceNetworkScreen() {
       return null;
     }
 
+    const timers = map.stations.flatMap((station) => station.timers);
+
     return (
-      map.stations
-        .flatMap((station) => station.timers)
-        .find(
-          (timer) =>
-            timer.state === "protected" || timer.state === "safety-buffer",
-        ) ?? null
+      timers.find(
+        (timer) =>
+          timer.state === "protected" || timer.state === "safety-buffer",
+      ) ??
+      timers[timers.length - 1] ??
+      null
     );
   }, [map]);
 
@@ -343,16 +421,17 @@ export default function ComplianceNetworkScreen() {
           <Text style={styles.eyebrow}>TACHOTRACK LIVE</Text>
           <Text style={styles.title}>Compliance Network</Text>
           <Text style={styles.subtitle}>
-            {formatDateHeading(displayedNowMilliseconds)} ·{" "}
-            {demoMode ? "demo snapshot" : "updated"}{" "}
-            {formatClock(new Date(displayedNowMilliseconds).toISOString())}
+            {formatDateHeading(displayedNowMilliseconds)} · {demoMode ? "demo snapshot" : "updated"} {formatClock(new Date(displayedNowMilliseconds).toISOString())}
           </Text>
         </View>
 
         <View style={styles.headerActions}>
           <View style={styles.modeSwitch}>
             <Pressable
-              style={[styles.modeButton, !demoMode && styles.modeButtonActive]}
+              style={[
+                styles.modeButton,
+                !demoMode && styles.modeButtonActive,
+              ]}
               onPress={() => setDemoMode(false)}
             >
               <Text
@@ -365,7 +444,10 @@ export default function ComplianceNetworkScreen() {
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.modeButton, demoMode && styles.modeButtonActive]}
+              style={[
+                styles.modeButton,
+                demoMode && styles.modeButtonActive,
+              ]}
               onPress={() => setDemoMode(true)}
             >
               <Text
@@ -378,10 +460,7 @@ export default function ComplianceNetworkScreen() {
               </Text>
             </Pressable>
           </View>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => void hydrate()}
-          >
+          <Pressable style={styles.secondaryButton} onPress={() => void hydrate()}>
             <Text style={styles.secondaryButtonText}>Refresh</Text>
           </Pressable>
           <Pressable style={styles.closeButton} onPress={() => router.back()}>
@@ -394,6 +473,51 @@ export default function ComplianceNetworkScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
+        {!demoMode && longRunningGuard?.confirmationRequired ? (
+          <View style={styles.activityGuardPanel}>
+            <View style={styles.activityGuardCopy}>
+              <Text style={styles.activityGuardEyebrow}>
+                ACTIVITY CONFIRMATION
+              </Text>
+              <Text style={styles.activityGuardTitle}>
+                Is this activity still correct?
+              </Text>
+              <Text style={styles.activityGuardText}>
+                {longRunningGuard.message} TachoTrack will not close or alter
+                the original record automatically.
+              </Text>
+            </View>
+
+            <View style={styles.activityGuardActions}>
+              <Pressable
+                style={styles.activityGuardSecondaryButton}
+                onPress={() => router.back()}
+              >
+                <Text style={styles.activityGuardSecondaryText}>
+                  Review dashboard
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.activityGuardConfirmButton}
+                onPress={() => {
+                  if (longRunningGuard.activeEventId === null) {
+                    return;
+                  }
+
+                  setActivityConfirmation({
+                    eventId: longRunningGuard.activeEventId,
+                    confirmedAt: new Date(nowMilliseconds).toISOString(),
+                  });
+                }}
+              >
+                <Text style={styles.activityGuardConfirmText}>
+                  Still correct
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {error !== null ? (
           <View style={styles.errorPanel}>
             <Text style={styles.errorTitle}>Map unavailable</Text>
@@ -403,65 +527,120 @@ export default function ComplianceNetworkScreen() {
 
         {map !== null ? (
           <>
-            <View style={styles.statusRow}>
-              <StatusCard
-                label="CURRENT ACTIVITY"
-                value={
-                  activeActivity === null
-                    ? "No active activity"
-                    : getActivityHistoryLabel(activeActivity.activity)
-                }
-                accent="#38bdf8"
-              />
-              <StatusCard
-                label="OVERNIGHT REST"
-                value={
-                  activeTimer === null
-                    ? "No active rest timer"
-                    : getTimerHeadline(activeTimer)
-                }
-                accent={
-                  activeTimer?.state === "safety-buffer" ? "#f59e0b" : "#22c55e"
-                }
-              />
-              <StatusCard
-                label="NETWORK"
-                value={`${map.lines.length} lines · ${map.stations.length} stations`}
-                accent="#a855f7"
-              />
-            </View>
+          <View style={styles.statusRow}>
+            <StatusCard
+              label="CURRENT ACTIVITY"
+              value={
+                activeActivity === null
+                  ? "No active activity"
+                  : getActivityHistoryLabel(activeActivity.activity)
+              }
+              accent="#38bdf8"
+            />
+            <StatusCard
+              label="OVERNIGHT REST"
+              value={
+                activeTimer === null
+                  ? "No active rest timer"
+                  : getTimerHeadline(activeTimer)
+              }
+              accent={
+                activeTimer?.state === "safety-buffer" ? "#f59e0b" : "#22c55e"
+              }
+            />
+            <StatusCard
+              label="NETWORK"
+              value={`${map.lines.length} lines · ${map.stations.length} stations`}
+              accent="#a855f7"
+            />
+          </View>
 
-            <View style={styles.mapPanel}>
-              <View style={styles.mapPanelHeader}>
-                <View>
-                  <Text style={styles.panelTitle}>
-                    Today&apos;s overhead view
-                  </Text>
-                  <Text style={styles.panelSubtitle}>
-                    Tap any station to inspect its evidence
-                  </Text>
+          <View style={styles.mapPanel}>
+            <View style={styles.mapPanelHeader}>
+              <View>
+                <Text style={styles.panelTitle}>
+                  {mapView === "hybrid"
+                    ? "Today’s activity and compliance"
+                    : "Today’s overhead network"}
+                </Text>
+                <Text style={styles.panelSubtitle}>
+                  {mapView === "hybrid"
+                    ? "Activity first, with live legal decision rails"
+                    : "Tap any station to inspect its evidence"}
+                </Text>
+              </View>
+              <View style={styles.mapHeaderActions}>
+                <View style={styles.mapViewSwitch}>
+                  <Pressable
+                    style={[
+                      styles.mapViewButton,
+                      mapView === "hybrid" && styles.mapViewButtonActive,
+                    ]}
+                    onPress={() => setMapView("hybrid")}
+                  >
+                    <Text
+                      style={[
+                        styles.mapViewButtonText,
+                        mapView === "hybrid" &&
+                          styles.mapViewButtonTextActive,
+                      ]}
+                    >
+                      Hybrid
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.mapViewButton,
+                      mapView === "network" && styles.mapViewButtonActive,
+                    ]}
+                    onPress={() => setMapView("network")}
+                  >
+                    <Text
+                      style={[
+                        styles.mapViewButtonText,
+                        mapView === "network" &&
+                          styles.mapViewButtonTextActive,
+                      ]}
+                    >
+                      Network
+                    </Text>
+                  </Pressable>
                 </View>
                 <View style={styles.liveBadge}>
                   <View style={styles.liveDot} />
                   <Text style={styles.liveBadgeText}>YOU ARE HERE</Text>
                 </View>
               </View>
+            </View>
 
+            {mapView === "hybrid" &&
+            calculation.day !== null &&
+            calculation.value !== null ? (
+              <HybridDayView
+                day={calculation.day}
+                states={calculation.value.states}
+                timer={activeTimer}
+                nowMilliseconds={displayedNowMilliseconds}
+              />
+            ) : (
               <NetworkDiagram
                 map={map}
                 availableWidth={width}
                 selectedStationId={selectedStation?.id ?? null}
                 onSelectStation={setSelectedStationId}
               />
-            </View>
+            )}
+          </View>
 
+          {mapView === "network" ? (
             <StationInspector station={selectedStation} />
+          ) : null}
 
-            <Text style={styles.restTargetNote}>
-              Timer targets currently show standard rest: 11h daily or 45h
-              weekly, plus the configured safety margin. Reduced-rest selection
-              will be connected when that choice is stored with each session.
-            </Text>
+          <Text style={styles.restTargetNote}>
+            Timer targets currently show standard rest: 11h daily or 45h weekly,
+            plus the configured safety margin. Reduced-rest selection will be
+            connected when that choice is stored with each session.
+          </Text>
           </>
         ) : null}
       </ScrollView>
@@ -488,13 +667,282 @@ function StatusCard({
   );
 }
 
+function HybridDayView({
+  day,
+  states,
+  timer,
+  nowMilliseconds,
+}: {
+  day: DriverDay;
+  states: LiveDayComplianceNetworkStates;
+  timer: ComplianceNetworkTimer | null;
+  nowMilliseconds: number;
+}) {
+  const totalActivityMinutes = Math.max(
+    1,
+    day.activities.reduce(
+      (total, activity) => total + activity.durationMinutes,
+      0,
+    ),
+  );
+  const firstActivity = day.activities[0] ?? null;
+  const wtdBreakPercentage =
+    states.wtd.requiredBreakMinutes === 0
+      ? 100
+      : clampPercentage(
+          (states.wtd.qualifyingBreakMinutes /
+            states.wtd.requiredBreakMinutes) *
+            100,
+        );
+  const dailyRestDeadlinePercentage =
+    states.dailyRest.minutesUntilDeadline === null
+      ? 0
+      : clampPercentage(
+          ((24 * 60 - states.dailyRest.minutesUntilDeadline) / (24 * 60)) *
+            100,
+        );
+
+  return (
+    <View style={styles.hybridBody}>
+      <View style={styles.activityLegend}>
+        <ActivityLegendItem label="Driving" colour={ACTIVITY_COLOURS.driving} />
+        <ActivityLegendItem label="Break" colour={ACTIVITY_COLOURS.break} />
+        <ActivityLegendItem
+          label="Other Work"
+          colour={ACTIVITY_COLOURS.otherWork}
+        />
+        <ActivityLegendItem label="POA" colour={ACTIVITY_COLOURS.poa} />
+      </View>
+
+      {day.activities.length > 0 ? (
+        <>
+          <View style={styles.activityRibbon}>
+            {day.activities.map((activity) => {
+              const percentage =
+                (activity.durationMinutes / totalActivityMinutes) * 100;
+
+              return (
+                <View
+                  key={activity.id}
+                  accessibilityLabel={`${getActivityLabel(activity.type)}, ${formatMinutes(activity.durationMinutes)}`}
+                  style={[
+                    styles.activityRibbonSegment,
+                    {
+                      backgroundColor: ACTIVITY_COLOURS[activity.type],
+                      flexGrow: Math.max(activity.durationMinutes, 1),
+                      flexBasis: percentageDimension(percentage),
+                    },
+                  ]}
+                >
+                  {activity.durationMinutes >= 30 ? (
+                    <Text style={styles.activityRibbonText} numberOfLines={1}>
+                      {getActivityLabel(activity.type)} ·{" "}
+                      {formatMinutes(activity.durationMinutes)}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+          <View style={styles.activityTimeRow}>
+            <Text style={styles.activityTimeText}>
+              {firstActivity === null ? "—" : formatClock(firstActivity.start)}
+            </Text>
+            <View style={styles.activityNowMarker}>
+              <View style={styles.activityNowDot} />
+              <Text style={styles.activityNowText}>
+                NOW {formatClock(new Date(nowMilliseconds).toISOString())}
+              </Text>
+            </View>
+          </View>
+        </>
+      ) : (
+        <View style={styles.emptyRibbon}>
+          <Text style={styles.emptyRibbonText}>
+            No activity has been recorded for this day.
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.hybridGrid}>
+        <View style={styles.complianceRails}>
+          <ComplianceRail
+            label="Continuous driving"
+            percentage={states.continuousDriving.percentageUsed}
+            value={
+              states.continuousDriving.status === "breach"
+                ? `${formatMinutes(states.continuousDriving.excessMinutes)} over`
+                : `${formatMinutes(states.continuousDriving.remainingMinutes)} left`
+            }
+            status={states.continuousDriving.status}
+          />
+          <ComplianceRail
+            label="Daily driving"
+            percentage={states.dailyDriving.percentageOfExtendedUsed}
+            value={`${formatMinutes(states.dailyDriving.drivingMinutesUsed)} / ${formatMinutes(states.dailyDriving.extendedLimitMinutes)}`}
+            status={states.dailyDriving.status}
+          />
+          <ComplianceRail
+            label="WTD breaks"
+            percentage={wtdBreakPercentage}
+            value={
+              states.wtd.breakShortfallMinutes === 0
+                ? "Requirement satisfied"
+                : `${formatMinutes(states.wtd.breakShortfallMinutes)} due`
+            }
+            status={states.wtd.level}
+          />
+          <ComplianceRail
+            label="Daily-rest deadline"
+            percentage={dailyRestDeadlinePercentage}
+            value={
+              states.dailyRest.minutesUntilDeadline === null
+                ? "Not active"
+                : `${formatMinutes(states.dailyRest.minutesUntilDeadline)} left`
+            }
+            status={states.dailyRest.level}
+          />
+        </View>
+
+        <OvernightRestCard timer={timer} states={states} />
+      </View>
+    </View>
+  );
+}
+
+function ActivityLegendItem({
+  label,
+  colour,
+}: {
+  label: string;
+  colour: string;
+}) {
+  return (
+    <View style={styles.activityLegendItem}>
+      <View style={[styles.activityLegendSwatch, { backgroundColor: colour }]} />
+      <Text style={styles.activityLegendText}>{label}</Text>
+    </View>
+  );
+}
+
+function ComplianceRail({
+  label,
+  percentage,
+  value,
+  status,
+}: {
+  label: string;
+  percentage: number;
+  value: string;
+  status: string;
+}) {
+  const colour = getRailColour(status);
+
+  return (
+    <View style={styles.complianceRailRow}>
+      <View style={styles.complianceRailHeading}>
+        <Text style={styles.complianceRailLabel}>{label}</Text>
+        <Text style={[styles.complianceRailValue, { color: colour }]}>
+          {value}
+        </Text>
+      </View>
+      <View style={styles.complianceRailTrack}>
+        <View
+          style={[
+            styles.complianceRailFill,
+            {
+              backgroundColor: colour,
+              width: percentageDimension(percentage),
+            },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+function getRailColour(status: string): string {
+  if (status.includes("breach") || status === "due") {
+    return "#ef4444";
+  }
+
+  if (
+    status.includes("warning") ||
+    status === "action" ||
+    status === "limit" ||
+    status === "standard-limit" ||
+    status === "extended-limit"
+  ) {
+    return "#f59e0b";
+  }
+
+  if (status === "advisory" || status === "extended") {
+    return "#38bdf8";
+  }
+
+  return "#22c55e";
+}
+
+function OvernightRestCard({
+  timer,
+  states,
+}: {
+  timer: ComplianceNetworkTimer | null;
+  states: LiveDayComplianceNetworkStates;
+}) {
+  const stateColour =
+    timer?.state === "safety-buffer"
+      ? "#f59e0b"
+      : timer?.state === "interrupted"
+        ? "#ef4444"
+        : "#22c55e";
+
+  return (
+    <View style={[styles.overnightCard, { borderLeftColor: stateColour }]}>
+      <Text style={[styles.overnightEyebrow, { color: stateColour }]}>
+        OVERNIGHT REST
+      </Text>
+      {timer !== null ? (
+        <>
+          <Text style={styles.overnightTitle}>Rest in progress</Text>
+          <Text style={styles.overnightCountdown}>{getTimerHeadline(timer)}</Text>
+          <View style={styles.overnightDivider} />
+          <View style={styles.overnightTimeRow}>
+            <Text style={styles.overnightTimeLabel}>Legal completion</Text>
+            <Text style={styles.overnightTimeValue}>
+              {formatClock(timer.legalCompleteAt)}
+            </Text>
+          </View>
+          <View style={styles.overnightTimeRow}>
+            <Text style={styles.overnightTimeLabel}>Safe resume</Text>
+            <Text style={styles.overnightTimeValue}>
+              {formatClock(timer.recommendedResumeAt)}
+            </Text>
+          </View>
+        </>
+      ) : (
+        <>
+          <Text style={styles.overnightTitle}>No rest timer running</Text>
+          <Text style={styles.overnightEmptyText}>
+            {states.dailyRest.dailyRestDeadline === null
+              ? "The daily-rest reference period has not started."
+              : `Daily rest is due by ${formatClock(states.dailyRest.dailyRestDeadline)}.`}
+          </Text>
+        </>
+      )}
+    </View>
+  );
+}
+
 function NetworkDiagram({
   map,
   availableWidth,
   selectedStationId,
   onSelectStation,
 }: {
-  map: NonNullable<ReturnType<typeof buildLiveDayComplianceNetworkMap>["map"]>;
+  map: NonNullable<
+    ReturnType<typeof buildLiveDayComplianceNetworkMap>["map"]
+  >;
   availableWidth: number;
   selectedStationId: string | null;
   onSelectStation: (stationId: string) => void;
@@ -611,50 +1059,50 @@ function NetworkDiagram({
 
             return (
               <G key={station.id}>
-                {station.isInterchange && maximumY > minimumY ? (
-                  <SvgLine
-                    x1={x}
-                    y1={minimumY}
-                    x2={x}
-                    y2={maximumY}
-                    stroke="#dbeafe"
-                    strokeWidth={selected ? 5 : 3}
-                    opacity={selected ? 1 : 0.68}
-                  />
-                ) : null}
+              {station.isInterchange && maximumY > minimumY ? (
+                <SvgLine
+                  x1={x}
+                  y1={minimumY}
+                  x2={x}
+                  y2={maximumY}
+                  stroke="#dbeafe"
+                  strokeWidth={selected ? 5 : 3}
+                  opacity={selected ? 1 : 0.68}
+                />
+              ) : null}
 
-                {stationLineIndexes.map((index) => (
-                  <G key={`${station.id}-${index}`}>
-                    {selected ? (
-                      <Circle
-                        cx={x}
-                        cy={yForLineIndex(index)}
-                        r={14}
-                        fill={stationColour}
-                        opacity={0.22}
-                      />
-                    ) : null}
+              {stationLineIndexes.map((index) => (
+                <G key={`${station.id}-${index}`}>
+                  {selected ? (
                     <Circle
                       cx={x}
                       cy={yForLineIndex(index)}
-                      r={station.isInterchange ? 8 : 6}
-                      fill="#07111f"
-                      stroke={stationColour}
-                      strokeWidth={selected ? 5 : 3}
+                      r={14}
+                      fill={stationColour}
+                      opacity={0.22}
                     />
-                  </G>
-                ))}
+                  ) : null}
+                  <Circle
+                    cx={x}
+                    cy={yForLineIndex(index)}
+                    r={station.isInterchange ? 8 : 6}
+                    fill="#07111f"
+                    stroke={stationColour}
+                    strokeWidth={selected ? 5 : 3}
+                  />
+                </G>
+              ))}
 
-                <SvgText
-                  x={x}
-                  y={labelY}
-                  fill={selected ? "#ffffff" : "#94a3b8"}
-                  fontSize={9}
-                  fontWeight={selected ? "800" : "600"}
-                  textAnchor="middle"
-                >
-                  {formatClock(station.occurredAt)}
-                </SvgText>
+              <SvgText
+                x={x}
+                y={labelY}
+                fill={selected ? "#ffffff" : "#94a3b8"}
+                fontSize={9}
+                fontWeight={selected ? "800" : "600"}
+                textAnchor="middle"
+              >
+                {formatClock(station.occurredAt)}
+              </SvgText>
               </G>
             );
           })}
@@ -714,9 +1162,7 @@ function StationInspector({
     <View style={styles.inspector}>
       <View style={styles.inspectorHeadingRow}>
         <View style={styles.inspectorHeadingCopy}>
-          <Text style={styles.inspectorTime}>
-            {formatClock(station.occurredAt)}
-          </Text>
+          <Text style={styles.inspectorTime}>{formatClock(station.occurredAt)}</Text>
           <Text style={styles.inspectorTitle}>{station.title}</Text>
         </View>
         <View
@@ -745,14 +1191,9 @@ function StationInspector({
             style={[styles.linePill, { borderColor: LINE_COLOURS[lineId] }]}
           >
             <View
-              style={[
-                styles.linePillDot,
-                { backgroundColor: LINE_COLOURS[lineId] },
-              ]}
+              style={[styles.linePillDot, { backgroundColor: LINE_COLOURS[lineId] }]}
             />
-            <Text style={styles.linePillText}>
-              {lineId.replaceAll("-", " ")}
-            </Text>
+            <Text style={styles.linePillText}>{lineId.replaceAll("-", " ")}</Text>
           </View>
         ))}
       </View>
@@ -764,9 +1205,7 @@ function StationInspector({
             <Text style={styles.timerValue}>{getTimerHeadline(timer)}</Text>
           </View>
           <View style={styles.timerTimes}>
-            <Text style={styles.timerTimeLabel}>
-              Legal {formatClock(timer.legalCompleteAt)}
-            </Text>
+            <Text style={styles.timerTimeLabel}>Legal {formatClock(timer.legalCompleteAt)}</Text>
             <Text style={styles.timerTimeLabel}>
               Safe {formatClock(timer.recommendedResumeAt)}
             </Text>
@@ -885,6 +1324,67 @@ const styles = StyleSheet.create({
     backgroundColor: "#240a0a",
     marginBottom: 12,
   },
+  activityGuardPanel: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    padding: 15,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#92400e",
+    backgroundColor: "#281407",
+    marginBottom: 12,
+  },
+  activityGuardCopy: {
+    flex: 1,
+  },
+  activityGuardEyebrow: {
+    color: "#fbbf24",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+  activityGuardTitle: {
+    color: "#fffbeb",
+    fontSize: 16,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  activityGuardText: {
+    color: "#fcd34d",
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  activityGuardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  activityGuardSecondaryButton: {
+    borderWidth: 1,
+    borderColor: "#a16207",
+    borderRadius: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  activityGuardSecondaryText: {
+    color: "#fde68a",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  activityGuardConfirmButton: {
+    borderRadius: 11,
+    backgroundColor: "#f59e0b",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  activityGuardConfirmText: {
+    color: "#1c1003",
+    fontSize: 10,
+    fontWeight: "900",
+  },
   errorTitle: {
     color: "#fca5a5",
     fontWeight: "900",
@@ -936,6 +1436,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 14,
   },
+  mapHeaderActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  mapViewSwitch: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#1e3a5f",
+    backgroundColor: "#050d18",
+    borderRadius: 10,
+    padding: 3,
+  },
+  mapViewButton: {
+    borderRadius: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  mapViewButtonActive: {
+    backgroundColor: "#1d4ed8",
+  },
+  mapViewButtonText: {
+    color: "#64748b",
+    fontSize: 9,
+    fontWeight: "900",
+  },
+  mapViewButtonTextActive: {
+    color: "#eff6ff",
+  },
   panelTitle: {
     color: "#f1f5f9",
     fontSize: 15,
@@ -968,6 +1497,183 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 0.8,
+  },
+  hybridBody: {
+    paddingHorizontal: 16,
+    paddingTop: 17,
+    paddingBottom: 18,
+  },
+  activityLegend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 10,
+  },
+  activityLegendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  activityLegendSwatch: {
+    width: 16,
+    height: 7,
+    borderRadius: 4,
+  },
+  activityLegendText: {
+    color: "#94a3b8",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  activityRibbon: {
+    minHeight: 62,
+    borderRadius: 13,
+    overflow: "hidden",
+    flexDirection: "row",
+    backgroundColor: "#111c2c",
+  },
+  activityRibbonSegment: {
+    minWidth: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  activityRibbonText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  activityTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
+  activityTimeText: {
+    color: "#64748b",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  activityNowMarker: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  activityNowDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#67e8f9",
+  },
+  activityNowText: {
+    color: "#67e8f9",
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  emptyRibbon: {
+    minHeight: 62,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 13,
+    backgroundColor: "#0b1728",
+  },
+  emptyRibbonText: {
+    color: "#64748b",
+    fontSize: 11,
+  },
+  hybridGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 14,
+    marginTop: 18,
+    alignItems: "stretch",
+  },
+  complianceRails: {
+    flex: 1,
+    gap: 13,
+    justifyContent: "center",
+  },
+  complianceRailRow: {
+    gap: 6,
+  },
+  complianceRailHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  complianceRailLabel: {
+    color: "#cbd5e1",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  complianceRailValue: {
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  complianceRailTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#142033",
+    overflow: "hidden",
+  },
+  complianceRailFill: {
+    height: "100%",
+    borderRadius: 4,
+  },
+  overnightCard: {
+    width: 285,
+    minHeight: 190,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: "#14532d",
+    borderLeftWidth: 5,
+    backgroundColor: "#06281a",
+    padding: 15,
+  },
+  overnightEyebrow: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+  overnightTitle: {
+    color: "#f0fdf4",
+    fontSize: 14,
+    fontWeight: "900",
+    marginTop: 5,
+  },
+  overnightCountdown: {
+    color: "#dcfce7",
+    fontSize: 25,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  overnightDivider: {
+    height: 1,
+    backgroundColor: "#14532d",
+    marginVertical: 12,
+  },
+  overnightTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 6,
+  },
+  overnightTimeLabel: {
+    color: "#86a995",
+    fontSize: 10,
+  },
+  overnightTimeValue: {
+    color: "#dcfce7",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  overnightEmptyText: {
+    color: "#86a995",
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 9,
   },
   inspector: {
     marginTop: 12,
