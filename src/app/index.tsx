@@ -164,6 +164,10 @@ const actions: DashboardAction[] = [
 
 const diaryItems = [
   {
+    label: "Compliance Network",
+    subtitle: "Live overhead view of today's legal journey",
+  },
+  {
     label: "Weekly Diary",
     subtitle: "View this week's driving record",
   },
@@ -1695,6 +1699,10 @@ export default function HomeScreen() {
               key={item.label}
               style={styles.diaryCard}
               onPress={() => {
+                if (item.label === "Compliance Network") {
+                  router.push("/diary/network");
+                }
+
                 if (item.label === "Weekly Diary") {
                   router.push("/diary/week");
                 }
