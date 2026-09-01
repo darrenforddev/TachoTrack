@@ -13,8 +13,8 @@ import {
 import Svg, {
   Circle,
   G,
-  Line as SvgLine,
   Rect,
+  Line as SvgLine,
   Text as SvgText,
 } from "react-native-svg";
 
@@ -44,8 +44,8 @@ import {
   type ComplianceNetworkStation,
   type ComplianceNetworkTimer,
 } from "../../engine/complianceNetworkMap";
-import { buildLiveDayComplianceNetworkMap } from "../../engine/liveDayComplianceNetworkMap";
 import type { LiveDayComplianceNetworkStates } from "../../engine/liveDayComplianceNetworkMap";
+import { buildLiveDayComplianceNetworkMap } from "../../engine/liveDayComplianceNetworkMap";
 import {
   evaluateLongRunningActivityGuard,
   type LongRunningActivityConfirmation,
@@ -120,7 +120,9 @@ function percentageDimension(value: number): `${number}%` {
   return `${clampPercentage(value)}%`;
 }
 
-function getActivityLabel(type: DriverDay["activities"][number]["type"]): string {
+function getActivityLabel(
+  type: DriverDay["activities"][number]["type"],
+): string {
   switch (type) {
     case "driving":
       return "Driving";
@@ -251,8 +253,7 @@ export default function ComplianceNetworkScreen() {
   }, [hydrate]);
 
   const displayedHistory = useMemo(
-    () =>
-      demoMode ? createSampleComplianceNetworkActivityHistory() : history,
+    () => (demoMode ? createSampleComplianceNetworkActivityHistory() : history),
     [demoMode, history],
   );
 
@@ -421,17 +422,16 @@ export default function ComplianceNetworkScreen() {
           <Text style={styles.eyebrow}>TACHOTRACK LIVE</Text>
           <Text style={styles.title}>Compliance Network</Text>
           <Text style={styles.subtitle}>
-            {formatDateHeading(displayedNowMilliseconds)} · {demoMode ? "demo snapshot" : "updated"} {formatClock(new Date(displayedNowMilliseconds).toISOString())}
+            {formatDateHeading(displayedNowMilliseconds)} ·{" "}
+            {demoMode ? "demo snapshot" : "updated"}{" "}
+            {formatClock(new Date(displayedNowMilliseconds).toISOString())}
           </Text>
         </View>
 
         <View style={styles.headerActions}>
           <View style={styles.modeSwitch}>
             <Pressable
-              style={[
-                styles.modeButton,
-                !demoMode && styles.modeButtonActive,
-              ]}
+              style={[styles.modeButton, !demoMode && styles.modeButtonActive]}
               onPress={() => setDemoMode(false)}
             >
               <Text
@@ -444,10 +444,7 @@ export default function ComplianceNetworkScreen() {
               </Text>
             </Pressable>
             <Pressable
-              style={[
-                styles.modeButton,
-                demoMode && styles.modeButtonActive,
-              ]}
+              style={[styles.modeButton, demoMode && styles.modeButtonActive]}
               onPress={() => setDemoMode(true)}
             >
               <Text
@@ -460,7 +457,16 @@ export default function ComplianceNetworkScreen() {
               </Text>
             </Pressable>
           </View>
-          <Pressable style={styles.secondaryButton} onPress={() => void hydrate()}>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => router.push("/diary/week-network")}
+          >
+            <Text style={styles.secondaryButtonText}>Week Journey</Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => void hydrate()}
+          >
             <Text style={styles.secondaryButtonText}>Refresh</Text>
           </Pressable>
           <Pressable style={styles.closeButton} onPress={() => router.back()}>
@@ -527,120 +533,120 @@ export default function ComplianceNetworkScreen() {
 
         {map !== null ? (
           <>
-          <View style={styles.statusRow}>
-            <StatusCard
-              label="CURRENT ACTIVITY"
-              value={
-                activeActivity === null
-                  ? "No active activity"
-                  : getActivityHistoryLabel(activeActivity.activity)
-              }
-              accent="#38bdf8"
-            />
-            <StatusCard
-              label="OVERNIGHT REST"
-              value={
-                activeTimer === null
-                  ? "No active rest timer"
-                  : getTimerHeadline(activeTimer)
-              }
-              accent={
-                activeTimer?.state === "safety-buffer" ? "#f59e0b" : "#22c55e"
-              }
-            />
-            <StatusCard
-              label="NETWORK"
-              value={`${map.lines.length} lines · ${map.stations.length} stations`}
-              accent="#a855f7"
-            />
-          </View>
-
-          <View style={styles.mapPanel}>
-            <View style={styles.mapPanelHeader}>
-              <View>
-                <Text style={styles.panelTitle}>
-                  {mapView === "hybrid"
-                    ? "Today’s activity and compliance"
-                    : "Today’s overhead network"}
-                </Text>
-                <Text style={styles.panelSubtitle}>
-                  {mapView === "hybrid"
-                    ? "Activity first, with live legal decision rails"
-                    : "Tap any station to inspect its evidence"}
-                </Text>
-              </View>
-              <View style={styles.mapHeaderActions}>
-                <View style={styles.mapViewSwitch}>
-                  <Pressable
-                    style={[
-                      styles.mapViewButton,
-                      mapView === "hybrid" && styles.mapViewButtonActive,
-                    ]}
-                    onPress={() => setMapView("hybrid")}
-                  >
-                    <Text
-                      style={[
-                        styles.mapViewButtonText,
-                        mapView === "hybrid" &&
-                          styles.mapViewButtonTextActive,
-                      ]}
-                    >
-                      Hybrid
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.mapViewButton,
-                      mapView === "network" && styles.mapViewButtonActive,
-                    ]}
-                    onPress={() => setMapView("network")}
-                  >
-                    <Text
-                      style={[
-                        styles.mapViewButtonText,
-                        mapView === "network" &&
-                          styles.mapViewButtonTextActive,
-                      ]}
-                    >
-                      Network
-                    </Text>
-                  </Pressable>
-                </View>
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveBadgeText}>YOU ARE HERE</Text>
-                </View>
-              </View>
+            <View style={styles.statusRow}>
+              <StatusCard
+                label="CURRENT ACTIVITY"
+                value={
+                  activeActivity === null
+                    ? "No active activity"
+                    : getActivityHistoryLabel(activeActivity.activity)
+                }
+                accent="#38bdf8"
+              />
+              <StatusCard
+                label="OVERNIGHT REST"
+                value={
+                  activeTimer === null
+                    ? "No active rest timer"
+                    : getTimerHeadline(activeTimer)
+                }
+                accent={
+                  activeTimer?.state === "safety-buffer" ? "#f59e0b" : "#22c55e"
+                }
+              />
+              <StatusCard
+                label="NETWORK"
+                value={`${map.lines.length} lines · ${map.stations.length} stations`}
+                accent="#a855f7"
+              />
             </View>
 
-            {mapView === "hybrid" &&
-            calculation.day !== null &&
-            calculation.value !== null ? (
-              <HybridDayView
-                day={calculation.day}
-                states={calculation.value.states}
-                timer={activeTimer}
-                nowMilliseconds={displayedNowMilliseconds}
-              />
-            ) : (
-              <NetworkDiagram
-                map={map}
-                availableWidth={width}
-                selectedStationId={selectedStation?.id ?? null}
-                onSelectStation={setSelectedStationId}
-              />
-            )}
-          </View>
+            <View style={styles.mapPanel}>
+              <View style={styles.mapPanelHeader}>
+                <View>
+                  <Text style={styles.panelTitle}>
+                    {mapView === "hybrid"
+                      ? "Today’s activity and compliance"
+                      : "Today’s overhead network"}
+                  </Text>
+                  <Text style={styles.panelSubtitle}>
+                    {mapView === "hybrid"
+                      ? "Activity first, with live legal decision rails"
+                      : "Tap any station to inspect its evidence"}
+                  </Text>
+                </View>
+                <View style={styles.mapHeaderActions}>
+                  <View style={styles.mapViewSwitch}>
+                    <Pressable
+                      style={[
+                        styles.mapViewButton,
+                        mapView === "hybrid" && styles.mapViewButtonActive,
+                      ]}
+                      onPress={() => setMapView("hybrid")}
+                    >
+                      <Text
+                        style={[
+                          styles.mapViewButtonText,
+                          mapView === "hybrid" &&
+                            styles.mapViewButtonTextActive,
+                        ]}
+                      >
+                        Hybrid
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.mapViewButton,
+                        mapView === "network" && styles.mapViewButtonActive,
+                      ]}
+                      onPress={() => setMapView("network")}
+                    >
+                      <Text
+                        style={[
+                          styles.mapViewButtonText,
+                          mapView === "network" &&
+                            styles.mapViewButtonTextActive,
+                        ]}
+                      >
+                        Network
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <View style={styles.liveBadge}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.liveBadgeText}>YOU ARE HERE</Text>
+                  </View>
+                </View>
+              </View>
 
-          {mapView === "network" ? (
-            <StationInspector station={selectedStation} />
-          ) : null}
+              {mapView === "hybrid" &&
+              calculation.day !== null &&
+              calculation.value !== null ? (
+                <HybridDayView
+                  day={calculation.day}
+                  states={calculation.value.states}
+                  timer={activeTimer}
+                  nowMilliseconds={displayedNowMilliseconds}
+                />
+              ) : (
+                <NetworkDiagram
+                  map={map}
+                  availableWidth={width}
+                  selectedStationId={selectedStation?.id ?? null}
+                  onSelectStation={setSelectedStationId}
+                />
+              )}
+            </View>
 
-          <Text style={styles.restTargetNote}>
-            Timer targets currently show standard rest: 11h daily or 45h weekly,
-            plus the configured safety margin. Reduced-rest selection will be
-            connected when that choice is stored with each session.
-          </Text>
+            {mapView === "network" ? (
+              <StationInspector station={selectedStation} />
+            ) : null}
+
+            <Text style={styles.restTargetNote}>
+              Timer targets currently show standard rest: 11h daily or 45h
+              weekly, plus the configured safety margin. Reduced-rest selection
+              will be connected when that choice is stored with each session.
+            </Text>
           </>
         ) : null}
       </ScrollView>
@@ -698,8 +704,7 @@ function HybridDayView({
     states.dailyRest.minutesUntilDeadline === null
       ? 0
       : clampPercentage(
-          ((24 * 60 - states.dailyRest.minutesUntilDeadline) / (24 * 60)) *
-            100,
+          ((24 * 60 - states.dailyRest.minutesUntilDeadline) / (24 * 60)) * 100,
         );
 
   return (
@@ -819,7 +824,9 @@ function ActivityLegendItem({
 }) {
   return (
     <View style={styles.activityLegendItem}>
-      <View style={[styles.activityLegendSwatch, { backgroundColor: colour }]} />
+      <View
+        style={[styles.activityLegendSwatch, { backgroundColor: colour }]}
+      />
       <Text style={styles.activityLegendText}>{label}</Text>
     </View>
   );
@@ -905,7 +912,9 @@ function OvernightRestCard({
       {timer !== null ? (
         <>
           <Text style={styles.overnightTitle}>Rest in progress</Text>
-          <Text style={styles.overnightCountdown}>{getTimerHeadline(timer)}</Text>
+          <Text style={styles.overnightCountdown}>
+            {getTimerHeadline(timer)}
+          </Text>
           <View style={styles.overnightDivider} />
           <View style={styles.overnightTimeRow}>
             <Text style={styles.overnightTimeLabel}>Legal completion</Text>
@@ -940,9 +949,7 @@ function NetworkDiagram({
   selectedStationId,
   onSelectStation,
 }: {
-  map: NonNullable<
-    ReturnType<typeof buildLiveDayComplianceNetworkMap>["map"]
-  >;
+  map: NonNullable<ReturnType<typeof buildLiveDayComplianceNetworkMap>["map"]>;
   availableWidth: number;
   selectedStationId: string | null;
   onSelectStation: (stationId: string) => void;
@@ -1059,50 +1066,50 @@ function NetworkDiagram({
 
             return (
               <G key={station.id}>
-              {station.isInterchange && maximumY > minimumY ? (
-                <SvgLine
-                  x1={x}
-                  y1={minimumY}
-                  x2={x}
-                  y2={maximumY}
-                  stroke="#dbeafe"
-                  strokeWidth={selected ? 5 : 3}
-                  opacity={selected ? 1 : 0.68}
-                />
-              ) : null}
+                {station.isInterchange && maximumY > minimumY ? (
+                  <SvgLine
+                    x1={x}
+                    y1={minimumY}
+                    x2={x}
+                    y2={maximumY}
+                    stroke="#dbeafe"
+                    strokeWidth={selected ? 5 : 3}
+                    opacity={selected ? 1 : 0.68}
+                  />
+                ) : null}
 
-              {stationLineIndexes.map((index) => (
-                <G key={`${station.id}-${index}`}>
-                  {selected ? (
+                {stationLineIndexes.map((index) => (
+                  <G key={`${station.id}-${index}`}>
+                    {selected ? (
+                      <Circle
+                        cx={x}
+                        cy={yForLineIndex(index)}
+                        r={14}
+                        fill={stationColour}
+                        opacity={0.22}
+                      />
+                    ) : null}
                     <Circle
                       cx={x}
                       cy={yForLineIndex(index)}
-                      r={14}
-                      fill={stationColour}
-                      opacity={0.22}
+                      r={station.isInterchange ? 8 : 6}
+                      fill="#07111f"
+                      stroke={stationColour}
+                      strokeWidth={selected ? 5 : 3}
                     />
-                  ) : null}
-                  <Circle
-                    cx={x}
-                    cy={yForLineIndex(index)}
-                    r={station.isInterchange ? 8 : 6}
-                    fill="#07111f"
-                    stroke={stationColour}
-                    strokeWidth={selected ? 5 : 3}
-                  />
-                </G>
-              ))}
+                  </G>
+                ))}
 
-              <SvgText
-                x={x}
-                y={labelY}
-                fill={selected ? "#ffffff" : "#94a3b8"}
-                fontSize={9}
-                fontWeight={selected ? "800" : "600"}
-                textAnchor="middle"
-              >
-                {formatClock(station.occurredAt)}
-              </SvgText>
+                <SvgText
+                  x={x}
+                  y={labelY}
+                  fill={selected ? "#ffffff" : "#94a3b8"}
+                  fontSize={9}
+                  fontWeight={selected ? "800" : "600"}
+                  textAnchor="middle"
+                >
+                  {formatClock(station.occurredAt)}
+                </SvgText>
               </G>
             );
           })}
@@ -1162,7 +1169,9 @@ function StationInspector({
     <View style={styles.inspector}>
       <View style={styles.inspectorHeadingRow}>
         <View style={styles.inspectorHeadingCopy}>
-          <Text style={styles.inspectorTime}>{formatClock(station.occurredAt)}</Text>
+          <Text style={styles.inspectorTime}>
+            {formatClock(station.occurredAt)}
+          </Text>
           <Text style={styles.inspectorTitle}>{station.title}</Text>
         </View>
         <View
@@ -1191,9 +1200,14 @@ function StationInspector({
             style={[styles.linePill, { borderColor: LINE_COLOURS[lineId] }]}
           >
             <View
-              style={[styles.linePillDot, { backgroundColor: LINE_COLOURS[lineId] }]}
+              style={[
+                styles.linePillDot,
+                { backgroundColor: LINE_COLOURS[lineId] },
+              ]}
             />
-            <Text style={styles.linePillText}>{lineId.replaceAll("-", " ")}</Text>
+            <Text style={styles.linePillText}>
+              {lineId.replaceAll("-", " ")}
+            </Text>
           </View>
         ))}
       </View>
@@ -1205,7 +1219,9 @@ function StationInspector({
             <Text style={styles.timerValue}>{getTimerHeadline(timer)}</Text>
           </View>
           <View style={styles.timerTimes}>
-            <Text style={styles.timerTimeLabel}>Legal {formatClock(timer.legalCompleteAt)}</Text>
+            <Text style={styles.timerTimeLabel}>
+              Legal {formatClock(timer.legalCompleteAt)}
+            </Text>
             <Text style={styles.timerTimeLabel}>
               Safe {formatClock(timer.recommendedResumeAt)}
             </Text>
