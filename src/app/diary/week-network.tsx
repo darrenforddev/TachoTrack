@@ -790,6 +790,15 @@ export default function WeekComplianceNetworkScreen() {
     const parsedReturnYear = Number(returnYear);
     const parsedReturnMonth = Number(returnMonth);
 
+    if (returnTo === "fortnight") {
+      router.replace({
+        pathname: "/diary/fortnight-journey",
+        params: { mode: dataMode },
+      });
+
+      return;
+    }
+
     if (returnTo === "year" && Number.isInteger(parsedReturnYear)) {
       router.replace({
         pathname: "/diary/year-journey",

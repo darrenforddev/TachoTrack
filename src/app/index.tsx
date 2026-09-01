@@ -1708,7 +1708,7 @@ export default function HomeScreen() {
                 }
 
                 if (item.label === "Fortnight Diary") {
-                  router.push("/diary/fortnight");
+                  router.push("/diary/fortnight-journey");
                 }
 
                 if (item.label === "Monthly Compliance") {
