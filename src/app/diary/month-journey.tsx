@@ -7,12 +7,11 @@ import {
 } from "../../data/driverHistoryArchive";
 import { loadDriverHistoryArchive } from "../../data/driverHistoryArchiveStorage";
 import {
-  SAMPLE_COMPLIANCE_JOURNEY_MONTH_INDEX,
-  SAMPLE_COMPLIANCE_JOURNEY_MONTH_LIVE_DATE,
-  SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW,
-  SAMPLE_COMPLIANCE_JOURNEY_MONTH_YEAR,
-  sampleComplianceJourneyMonthDays,
-} from "../../data/sampleComplianceJourneyMonth";
+  SAMPLE_COMPLIANCE_JOURNEY_YEAR,
+  SAMPLE_COMPLIANCE_JOURNEY_YEAR_LIVE_DATE,
+  SAMPLE_COMPLIANCE_JOURNEY_YEAR_NOW,
+  sampleComplianceJourneyYearDays,
+} from "../../data/sampleComplianceJourneyYear";
 import {
   buildMonthComplianceJourney,
   type MonthComplianceJourneyResult,
@@ -284,18 +283,36 @@ function getRestMarker(day: WeekComplianceDaySummary): {
   return { label: formatMinutes(day.restMinutes), colour: "#fb5770" };
 }
 
-function openWeek(week: MonthJourneyWeekSummary, dataMode: DataMode): void {
+function openWeek(
+  week: MonthJourneyWeekSummary,
+  dataMode: DataMode,
+  returnYear: number,
+  returnMonth: number,
+  returnTo: string | undefined,
+): void {
   router.push({
     pathname: "/diary/week-network",
-    params: { mode: dataMode, weekStart: week.weekStartDate },
+    params: {
+      mode: dataMode,
+      returnMonth: String(returnMonth + 1),
+      ...(returnTo === undefined ? {} : { returnTo }),
+      returnYear: String(returnYear),
+      weekStart: week.weekStartDate,
+    },
   });
 }
 
 function MonthWeekRoute({
   dataMode,
+  returnMonth,
+  returnTo,
+  returnYear,
   week,
 }: {
   dataMode: DataMode;
+  returnMonth: number;
+  returnTo: string | undefined;
+  returnYear: number;
   week: MonthJourneyWeekSummary;
 }) {
   const weekColour = getWeekColour(week);
@@ -303,7 +320,9 @@ function MonthWeekRoute({
   return (
     <Pressable
       disabled={week.recordedDayCount === 0}
-      onPress={() => openWeek(week, dataMode)}
+      onPress={() =>
+        openWeek(week, dataMode, returnYear, returnMonth, returnTo)
+      }
       style={({ pressed }) => [
         styles.weekRoute,
         { borderLeftColor: weekColour },
@@ -405,14 +424,26 @@ function ProgressRoute({
 
 export default function MonthJourneyScreen() {
   const params = useLocalSearchParams<{
+    mode?: string;
     year?: string;
     month?: string;
+    returnTo?: string;
   }>();
+  const requestedMode =
+    typeof params.mode === "string" ? params.mode : undefined;
+  const returnTo =
+    typeof params.returnTo === "string" ? params.returnTo : undefined;
   const initialMonth = useMemo(
     () => parseInitialMonth(params.year, params.month),
     [params.month, params.year],
   );
-  const [dataMode, setDataMode] = useState<DataMode>("live");
+  const hasRequestedDemoMonth =
+    requestedMode === "demo" &&
+    typeof params.year === "string" &&
+    typeof params.month === "string";
+  const [dataMode, setDataMode] = useState<DataMode>(() =>
+    requestedMode === "demo" ? "demo" : "live",
+  );
   const [displayYear, setDisplayYear] = useState(initialMonth.year);
   const [displayMonth, setDisplayMonth] = useState(initialMonth.month);
   const [now, setNow] = useState(() => Date.now());
@@ -428,6 +459,12 @@ export default function MonthJourneyScreen() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (requestedMode === "demo" || requestedMode === "live") {
+      setDataMode(requestedMode);
+    }
+  }, [requestedMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -465,16 +502,26 @@ export default function MonthJourneyScreen() {
   }, [refreshVersion]);
 
   const selectedYear =
-    dataMode === "demo" ? SAMPLE_COMPLIANCE_JOURNEY_MONTH_YEAR : displayYear;
+    dataMode === "demo"
+      ? hasRequestedDemoMonth
+        ? initialMonth.year
+        : SAMPLE_COMPLIANCE_JOURNEY_YEAR
+      : displayYear;
   const selectedMonth =
     dataMode === "demo"
-      ? SAMPLE_COMPLIANCE_JOURNEY_MONTH_INDEX
+      ? hasRequestedDemoMonth
+        ? initialMonth.month
+        : 7
       : displayMonth;
   const selectedMonthPrefix = `${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}`;
   const todayDate = getLocalDate(now);
   const liveDate =
     dataMode === "demo"
-      ? SAMPLE_COMPLIANCE_JOURNEY_MONTH_LIVE_DATE
+      ? SAMPLE_COMPLIANCE_JOURNEY_YEAR_LIVE_DATE.startsWith(
+          `${selectedMonthPrefix}-`,
+        )
+        ? SAMPLE_COMPLIANCE_JOURNEY_YEAR_LIVE_DATE
+        : undefined
       : todayDate.startsWith(`${selectedMonthPrefix}-`)
         ? todayDate
         : undefined;
@@ -491,11 +538,11 @@ export default function MonthJourneyScreen() {
           month: selectedMonth,
           days:
             dataMode === "demo"
-              ? sampleComplianceJourneyMonthDays
+              ? sampleComplianceJourneyYearDays
               : archive.days,
           ...(liveDate === undefined ? {} : { liveDate }),
           now:
-            dataMode === "demo" ? SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW : now,
+            dataMode === "demo" ? SAMPLE_COMPLIANCE_JOURNEY_YEAR_NOW : now,
         }),
         error: null,
       };
@@ -513,7 +560,7 @@ export default function MonthJourneyScreen() {
   const result = prepared.result;
   const displayNow =
     dataMode === "demo"
-      ? new Date(SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW).getTime()
+      ? new Date(SAMPLE_COMPLIANCE_JOURNEY_YEAR_NOW).getTime()
       : now;
 
   function changeMonth(offset: number): void {
@@ -527,6 +574,19 @@ export default function MonthJourneyScreen() {
   function refresh(): void {
     setNow(Date.now());
     setRefreshVersion((version) => version + 1);
+  }
+
+  function closeMonth(): void {
+    if (returnTo === "year") {
+      router.replace({
+        pathname: "/diary/year-journey",
+        params: { mode: dataMode, year: String(selectedYear) },
+      });
+
+      return;
+    }
+
+    router.replace("/");
   }
 
   const resolvedRestCount =
@@ -602,7 +662,7 @@ export default function MonthJourneyScreen() {
               <Text style={styles.secondaryButtonText}>Refresh</Text>
             </Pressable>
             <Pressable
-              onPress={() => router.replace("/")}
+              onPress={closeMonth}
               style={styles.closeButton}
             >
               <Text style={styles.closeButtonText}>Close</Text>
@@ -687,6 +747,9 @@ export default function MonthJourneyScreen() {
                   <MonthWeekRoute
                     key={week.id}
                     dataMode={dataMode}
+                    returnMonth={selectedMonth}
+                    returnTo={returnTo}
+                    returnYear={selectedYear}
                     week={week}
                   />
                 ))}

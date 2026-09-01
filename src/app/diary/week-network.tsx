@@ -22,10 +22,10 @@ import {
   sampleComplianceNetworkPreviousWeekDays,
 } from "../../data/sampleComplianceNetworkWeek";
 import {
-  SAMPLE_COMPLIANCE_JOURNEY_MONTH_LIVE_DATE,
-  SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW,
-  sampleComplianceJourneyMonthDays,
-} from "../../data/sampleComplianceJourneyMonth";
+  SAMPLE_COMPLIANCE_JOURNEY_YEAR_LIVE_DATE,
+  SAMPLE_COMPLIANCE_JOURNEY_YEAR_NOW,
+  sampleComplianceJourneyYearDays,
+} from "../../data/sampleComplianceJourneyYear";
 import type { WeeklyDriverHistory } from "../../data/weeklyDriverHistory";
 import {
   loadFortnightlyDriverHistory,
@@ -564,9 +564,15 @@ function buildCumulativeValues(
 export default function WeekComplianceNetworkScreen() {
   const params = useLocalSearchParams<{
     mode?: string;
+    returnMonth?: string;
+    returnTo?: string;
+    returnYear?: string;
     weekStart?: string;
   }>();
   const requestedMode = getSingleParam(params.mode);
+  const returnMonth = getSingleParam(params.returnMonth);
+  const returnTo = getSingleParam(params.returnTo);
+  const returnYear = getSingleParam(params.returnYear);
   const requestedWeekStart = getSingleParam(params.weekStart);
   const [dataMode, setDataMode] = useState<DataMode>(() =>
     requestedMode === "demo" ? "demo" : "live",
@@ -659,7 +665,7 @@ export default function WeekComplianceNetworkScreen() {
       if (requestedWeekStart !== undefined) {
         const sourceDays =
           dataMode === "demo"
-            ? sampleComplianceJourneyMonthDays
+            ? sampleComplianceJourneyYearDays
             : archive.days;
         const requestedWeek = buildRequestedWeekHistory(
           sourceDays,
@@ -667,7 +673,7 @@ export default function WeekComplianceNetworkScreen() {
         );
         const preferredNow =
           dataMode === "demo"
-            ? new Date(SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW).getTime()
+            ? new Date(SAMPLE_COMPLIANCE_JOURNEY_YEAR_NOW).getTime()
             : now;
         const weekNow = getWeekNow(
           requestedWeek.startMilliseconds,
@@ -676,7 +682,7 @@ export default function WeekComplianceNetworkScreen() {
         );
         const candidateLiveDate =
           dataMode === "demo"
-            ? SAMPLE_COMPLIANCE_JOURNEY_MONTH_LIVE_DATE
+            ? SAMPLE_COMPLIANCE_JOURNEY_YEAR_LIVE_DATE
             : getLocalDate(now);
         const liveDate =
           candidateLiveDate >= requestedWeek.currentWeek.weekStartDate &&
@@ -741,7 +747,7 @@ export default function WeekComplianceNetworkScreen() {
     dataMode === "demo"
       ? requestedWeekStart === undefined
         ? new Date(SAMPLE_COMPLIANCE_NETWORK_WEEK_NOW).getTime()
-        : new Date(SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW).getTime()
+        : new Date(SAMPLE_COMPLIANCE_JOURNEY_YEAR_NOW).getTime()
       : now;
   const displayNow =
     requestedWeekStart !== undefined &&
@@ -778,6 +784,41 @@ export default function WeekComplianceNetworkScreen() {
   function refresh(): void {
     setNow(Date.now());
     setRefreshVersion((version) => version + 1);
+  }
+
+  function closeWeek(): void {
+    const parsedReturnYear = Number(returnYear);
+    const parsedReturnMonth = Number(returnMonth);
+
+    if (returnTo === "year" && Number.isInteger(parsedReturnYear)) {
+      router.replace({
+        pathname: "/diary/year-journey",
+        params: { mode: dataMode, year: String(parsedReturnYear) },
+      });
+
+      return;
+    }
+
+    if (
+      Number.isInteger(parsedReturnYear) &&
+      Number.isInteger(parsedReturnMonth) &&
+      parsedReturnMonth >= 1 &&
+      parsedReturnMonth <= 12
+    ) {
+      router.replace({
+        pathname: "/diary/month-journey",
+        params: {
+          mode: dataMode,
+          month: String(parsedReturnMonth),
+          ...(returnTo === undefined ? {} : { returnTo }),
+          year: String(parsedReturnYear),
+        },
+      });
+
+      return;
+    }
+
+    router.replace("/");
   }
 
   return (
@@ -833,7 +874,7 @@ export default function WeekComplianceNetworkScreen() {
             <Pressable onPress={refresh} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>Refresh</Text>
             </Pressable>
-            <Pressable onPress={() => router.back()} style={styles.closeButton}>
+            <Pressable onPress={closeWeek} style={styles.closeButton}>
               <Text style={styles.closeButtonText}>Close</Text>
             </Pressable>
           </View>
