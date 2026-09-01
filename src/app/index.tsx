@@ -1712,11 +1712,11 @@ export default function HomeScreen() {
                 }
 
                 if (item.label === "Monthly Compliance") {
-                  router.push("/diary/month");
+                  router.push("/diary/month-journey");
                 }
 
                 if (item.label === "Yearly Compliance") {
-                  router.push("/diary/year");
+                  router.push("/diary/year-journey");
                 }
               }}
             >
