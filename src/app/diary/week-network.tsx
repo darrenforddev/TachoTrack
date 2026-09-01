@@ -1,6 +1,11 @@
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  createDriverHistoryArchive,
+  type DriverHistoryArchive,
+} from "../../data/driverHistoryArchive";
+import { loadDriverHistoryArchive } from "../../data/driverHistoryArchiveStorage";
 import {
   createCurrentFortnightlyDriverHistory,
   rollFortnightlyDriverHistoryForward,
@@ -16,6 +21,12 @@ import {
   sampleComplianceNetworkCurrentWeek,
   sampleComplianceNetworkPreviousWeekDays,
 } from "../../data/sampleComplianceNetworkWeek";
+import {
+  SAMPLE_COMPLIANCE_JOURNEY_MONTH_LIVE_DATE,
+  SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW,
+  sampleComplianceJourneyMonthDays,
+} from "../../data/sampleComplianceJourneyMonth";
+import type { WeeklyDriverHistory } from "../../data/weeklyDriverHistory";
 import {
   loadFortnightlyDriverHistory,
   loadWeeklyDriverHistory,
@@ -47,6 +58,7 @@ interface RestTimerDisplay {
 
 const DAY_NAMES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 const REST_SAFETY_MARGIN_MINUTES = 5;
+const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
 
 const ACTIVITY_COLOURS = {
   driving: "#f6404b",
@@ -94,6 +106,88 @@ function getLocalDate(milliseconds: number): string {
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0"),
   ].join("-");
+}
+
+function getSingleParam(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function parseDateOnly(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+
+  const milliseconds = new Date(`${value}T00:00:00.000Z`).getTime();
+
+  if (
+    !Number.isFinite(milliseconds) ||
+    new Date(milliseconds).toISOString().slice(0, 10) !== value
+  ) {
+    return null;
+  }
+
+  return milliseconds;
+}
+
+function toDateOnly(milliseconds: number): string {
+  return new Date(milliseconds).toISOString().slice(0, 10);
+}
+
+function buildRequestedWeekHistory(
+  days: WeeklyDriverHistory["days"],
+  requestedWeekStart: string,
+): {
+  currentWeek: WeeklyDriverHistory;
+  previousWeekDays: WeeklyDriverHistory["days"];
+  startMilliseconds: number;
+  endExclusiveMilliseconds: number;
+} {
+  const startMilliseconds = parseDateOnly(requestedWeekStart);
+
+  if (
+    startMilliseconds === null ||
+    new Date(startMilliseconds).getUTCDay() !== 1
+  ) {
+    throw new Error("The requested Week Journey must begin on a Monday.");
+  }
+
+  const endExclusiveMilliseconds = startMilliseconds + 7 * DAY_MILLISECONDS;
+  const weekEndDate = toDateOnly(endExclusiveMilliseconds - DAY_MILLISECONDS);
+  const previousWeekStartDate = toDateOnly(
+    startMilliseconds - 7 * DAY_MILLISECONDS,
+  );
+  const previousWeekEndDate = toDateOnly(startMilliseconds - DAY_MILLISECONDS);
+
+  return {
+    currentWeek: {
+      weekStartDate: requestedWeekStart,
+      weekEndDate,
+      days: days.filter(
+        (day) => day.date >= requestedWeekStart && day.date <= weekEndDate,
+      ),
+    },
+    previousWeekDays: days.filter(
+      (day) =>
+        day.date >= previousWeekStartDate && day.date <= previousWeekEndDate,
+    ),
+    startMilliseconds,
+    endExclusiveMilliseconds,
+  };
+}
+
+function getWeekNow(
+  startMilliseconds: number,
+  endExclusiveMilliseconds: number,
+  preferredNow: number,
+): number {
+  if (
+    preferredNow >= startMilliseconds &&
+    preferredNow < endExclusiveMilliseconds
+  ) {
+    return preferredNow;
+  }
+
+  return endExclusiveMilliseconds - 12 * 60 * 60 * 1000;
 }
 
 function getDayStatusColour(day: WeekComplianceDaySummary): string {
@@ -468,7 +562,15 @@ function buildCumulativeValues(
 }
 
 export default function WeekComplianceNetworkScreen() {
-  const [dataMode, setDataMode] = useState<DataMode>("live");
+  const params = useLocalSearchParams<{
+    mode?: string;
+    weekStart?: string;
+  }>();
+  const requestedMode = getSingleParam(params.mode);
+  const requestedWeekStart = getSingleParam(params.weekStart);
+  const [dataMode, setDataMode] = useState<DataMode>(() =>
+    requestedMode === "demo" ? "demo" : "live",
+  );
   const [now, setNow] = useState(() => Date.now());
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [hydrated, setHydrated] = useState(false);
@@ -479,6 +581,15 @@ export default function WeekComplianceNetworkScreen() {
   const [liveHistory, setLiveHistory] = useState(() =>
     createCurrentFortnightlyDriverHistory(Date.now()),
   );
+  const [archive, setArchive] = useState<DriverHistoryArchive>(() =>
+    createDriverHistoryArchive(),
+  );
+
+  useEffect(() => {
+    if (requestedMode === "demo" || requestedMode === "live") {
+      setDataMode(requestedMode);
+    }
+  }, [requestedMode]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60 * 1000);
@@ -491,11 +602,12 @@ export default function WeekComplianceNetworkScreen() {
 
     async function hydrate(): Promise<void> {
       try {
-        const [storedWeek, storedFortnight, storedRestState] =
+        const [storedWeek, storedFortnight, storedRestState, storedArchive] =
           await Promise.all([
             loadWeeklyDriverHistory(),
             loadFortnightlyDriverHistory(),
             loadRestSessionState(),
+            loadDriverHistoryArchive(),
           ]);
 
         if (cancelled) {
@@ -515,6 +627,7 @@ export default function WeekComplianceNetworkScreen() {
 
         setLiveHistory({ ...rolledFortnight, currentWeek });
         setRestState(storedRestState);
+        setArchive(storedArchive);
         setLoadError(null);
         setHydrated(true);
       } catch (error) {
@@ -543,6 +656,46 @@ export default function WeekComplianceNetworkScreen() {
     error: string | null;
   }>(() => {
     try {
+      if (requestedWeekStart !== undefined) {
+        const sourceDays =
+          dataMode === "demo"
+            ? sampleComplianceJourneyMonthDays
+            : archive.days;
+        const requestedWeek = buildRequestedWeekHistory(
+          sourceDays,
+          requestedWeekStart,
+        );
+        const preferredNow =
+          dataMode === "demo"
+            ? new Date(SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW).getTime()
+            : now;
+        const weekNow = getWeekNow(
+          requestedWeek.startMilliseconds,
+          requestedWeek.endExclusiveMilliseconds,
+          preferredNow,
+        );
+        const candidateLiveDate =
+          dataMode === "demo"
+            ? SAMPLE_COMPLIANCE_JOURNEY_MONTH_LIVE_DATE
+            : getLocalDate(now);
+        const liveDate =
+          candidateLiveDate >= requestedWeek.currentWeek.weekStartDate &&
+          candidateLiveDate <= requestedWeek.currentWeek.weekEndDate
+            ? candidateLiveDate
+            : undefined;
+
+        return {
+          result: buildWeekComplianceNetworkMap({
+            id: `week-journey-${dataMode}-${requestedWeekStart}`,
+            currentWeek: requestedWeek.currentWeek,
+            previousWeekDays: requestedWeek.previousWeekDays,
+            ...(liveDate === undefined ? {} : { liveDate }),
+            now: weekNow,
+          }),
+          error: null,
+        };
+      }
+
       if (dataMode === "demo") {
         return {
           result: buildWeekComplianceNetworkMap({
@@ -575,21 +728,42 @@ export default function WeekComplianceNetworkScreen() {
             : "The week journey could not be built.",
       };
     }
-  }, [dataMode, liveHistory, now]);
+  }, [archive.days, dataMode, liveHistory, now, requestedWeekStart]);
 
   const result = prepared.result;
-  const displayNow =
+  const resultStartMilliseconds =
+    result === null ? null : parseDateOnly(result.days[0].date);
+  const resultEndExclusiveMilliseconds =
+    resultStartMilliseconds === null
+      ? null
+      : resultStartMilliseconds + 7 * DAY_MILLISECONDS;
+  const preferredDisplayNow =
     dataMode === "demo"
-      ? new Date(SAMPLE_COMPLIANCE_NETWORK_WEEK_NOW).getTime()
+      ? requestedWeekStart === undefined
+        ? new Date(SAMPLE_COMPLIANCE_NETWORK_WEEK_NOW).getTime()
+        : new Date(SAMPLE_COMPLIANCE_JOURNEY_MONTH_NOW).getTime()
       : now;
+  const displayNow =
+    requestedWeekStart !== undefined &&
+    resultStartMilliseconds !== null &&
+    resultEndExclusiveMilliseconds !== null
+      ? getWeekNow(
+          resultStartMilliseconds,
+          resultEndExclusiveMilliseconds,
+          preferredDisplayNow,
+        )
+      : preferredDisplayNow;
   const activeRestSession =
     restState.sessions.find(
       (session) => session.id === restState.activeSessionId,
     ) ?? null;
+  const resultContainsLiveDay = result?.days.some((day) => day.live) ?? false;
   const restTimer =
-    dataMode === "demo"
+    dataMode === "demo" && resultContainsLiveDay
       ? buildDemoRestTimer()
-      : buildActiveRestTimer(activeRestSession, now);
+      : dataMode === "live" && resultContainsLiveDay
+        ? buildActiveRestTimer(activeRestSession, now)
+        : buildActiveRestTimer(null, displayNow);
 
   const weeklyStationValues =
     result === null ? [] : buildCumulativeValues(result.days, 0);
