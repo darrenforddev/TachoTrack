@@ -17,7 +17,15 @@ function makeDay(
   return {
     id,
     date,
-    activities: [],
+    activities: [
+      {
+        id: `${id}-qualifying-break`,
+        type: "break",
+        start: `${date}T12:00:00.000Z`,
+        end: `${date}T12:45:00.000Z`,
+        durationMinutes: 45,
+      },
+    ],
     drivingMinutes,
     otherWorkMinutes: 60,
     breakMinutes: 45,
@@ -77,6 +85,17 @@ assert(
   "A historical zero-rest day must retain its daily-rest breach.",
 );
 
+assert(
+  result.days[3].lineSeverities["daily-rest"] === "breach" &&
+    result.days[3].lineSeverities.wtd === "good",
+  "Daily-rest and WTD lines must carry independent severities.",
+);
+
+assert(
+  result.days[0].lineSeverities["daily-driving"] === "warning",
+  "A 10-hour day must warn on the daily-driving line.",
+);
+
 const liveRestResult = buildWeekComplianceNetworkMap({
   id: "week-network-live-rest-suppression",
   currentWeek: {
@@ -104,6 +123,12 @@ assert(
   result.states.fortnightlyDriving.drivingMinutesUsed === 90 * 60 &&
     result.states.fortnightlyDriving.status === "limit",
   "Previous and current weeks must reach the exact 90-hour fortnight limit.",
+);
+
+assert(
+  result.days[5].lineSeverities["weekly-driving"] === "limit" &&
+    result.days[5].lineSeverities["fortnightly-driving"] === "limit",
+  "The final recorded day must reach both cumulative limit stations.",
 );
 
 assert(
@@ -147,4 +172,4 @@ try {
 
 assert(duplicateDateRejected, "Duplicate DriverDay dates must be rejected.");
 
-console.log("✓ Week compliance-network scenarios passed (12/12)");
+console.log("✓ Week compliance-network scenarios passed (15/15)");

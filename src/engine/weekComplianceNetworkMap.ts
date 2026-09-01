@@ -4,6 +4,7 @@ import { evaluateDriverDay } from "./complianceEngine";
 import {
   buildComplianceNetworkMap,
   type ComplianceNetworkEvidenceEvent,
+  type ComplianceNetworkLineId,
   type ComplianceNetworkMap,
   type ComplianceNetworkSeverity,
 } from "./complianceNetworkMap";
@@ -41,6 +42,9 @@ export interface WeekComplianceDaySummary {
   restMinutes: number;
   dailyRestType: DriverDay["dailyRestType"] | null;
   sourceDayId: string | null;
+  lineSeverities: Partial<
+    Record<ComplianceNetworkLineId, ComplianceNetworkSeverity>
+  >;
 }
 
 export interface WeekComplianceNetworkStates {
@@ -140,6 +144,37 @@ function severityFromExtensionState(
   }
 }
 
+const SEVERITY_PRIORITY: Record<ComplianceNetworkSeverity, number> = {
+  good: 0,
+  info: 1,
+  limit: 2,
+  warning: 3,
+  breach: 4,
+};
+
+function worstSeverity(
+  severities: ComplianceNetworkSeverity[],
+): ComplianceNetworkSeverity {
+  return severities.reduce<ComplianceNetworkSeverity>(
+    (worst, severity) =>
+      SEVERITY_PRIORITY[severity] > SEVERITY_PRIORITY[worst]
+        ? severity
+        : worst,
+    "good",
+  );
+}
+
+function severityForRule(
+  issues: ReturnType<typeof evaluateDriverDay>["issues"],
+  rule: string,
+): ComplianceNetworkSeverity {
+  return worstSeverity(
+    issues
+      .filter((issue) => issue.rule === rule)
+      .map((issue) => severityFromDayLevel(issue.level)),
+  );
+}
+
 function formatMinutes(minutes: number): string {
   const safeMinutes = Math.max(0, Math.floor(minutes));
   const hours = Math.floor(safeMinutes / 60);
@@ -188,6 +223,7 @@ function validateCurrentWeek(history: WeeklyDriverHistory): {
 
 function buildDaySummaries(
   currentWeek: WeeklyDriverHistory,
+  previousWeekDays: DriverDay[],
   startMilliseconds: number,
   liveDate: string | undefined,
 ): WeekComplianceDaySummary[] {
@@ -215,12 +251,30 @@ function buildDaySummaries(
         restMinutes: 0,
         dailyRestType: null,
         sourceDayId: null,
+        lineSeverities: {},
       };
     }
 
     const compliance = evaluateDriverDay(day, {
       isLiveDay: live,
     });
+    const cumulativeDays = currentWeek.days
+      .filter((candidate) => candidate.date <= date)
+      .sort((left, right) => left.date.localeCompare(right.date));
+    const earlierDays = cumulativeDays.filter(
+      (candidate) => candidate.date < date,
+    );
+    const cumulativeExtensionState =
+      calculateExtendedDrivingAllowanceState(cumulativeDays);
+    const earlierExtensionState =
+      calculateExtendedDrivingAllowanceState(earlierDays);
+    const createsExtensionBreach =
+      cumulativeExtensionState.excessExtensionDays >
+      earlierExtensionState.excessExtensionDays;
+    const dailyDrivingSeverity = worstSeverity([
+      severityForRule(compliance.issues, "daily-driving"),
+      createsExtensionBreach ? "breach" : "good",
+    ]);
 
     return {
       date,
@@ -236,6 +290,21 @@ function buildDaySummaries(
       restMinutes: day.restMinutes,
       dailyRestType: day.dailyRestType,
       sourceDayId: day.id,
+      lineSeverities: {
+        activity: "info",
+        "daily-driving": dailyDrivingSeverity,
+        wtd: severityForRule(compliance.issues, "working-time-break"),
+        "daily-rest": severityForRule(compliance.issues, "daily-rest"),
+        "weekly-driving": severityFromLimitStatus(
+          calculateWeeklyDrivingState(cumulativeDays).status,
+        ),
+        "fortnightly-driving": severityFromLimitStatus(
+          calculateFortnightlyDrivingState(
+            previousWeekDays,
+            cumulativeDays,
+          ).status,
+        ),
+      },
     };
   });
 }
@@ -316,6 +385,7 @@ export function buildWeekComplianceNetworkMap(
   };
   const days = buildDaySummaries(
     options.currentWeek,
+    previousWeekDays,
     bounds.startMilliseconds,
     options.liveDate,
   );
