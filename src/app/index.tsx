@@ -168,6 +168,10 @@ const diaryItems = [
     subtitle: "Live overhead view of today's legal journey",
   },
   {
+    label: "Customer Operations",
+    subtitle: "Track site visits, trailers and box journeys",
+  },
+  {
     label: "Weekly Diary",
     subtitle: "View this week's driving record",
   },
@@ -1699,6 +1703,9 @@ export default function HomeScreen() {
               key={item.label}
               style={styles.diaryCard}
               onPress={() => {
+                if (item.label === "Customer Operations") {
+                  router.push("/operations/day");
+                }
                 if (item.label === "Compliance Network") {
                   router.push("/diary/network");
                 }
