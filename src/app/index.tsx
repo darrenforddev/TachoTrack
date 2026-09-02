@@ -47,6 +47,7 @@ import { calculateWeeklyRestSessionState } from "../engine/weeklyRestSessionStat
 import { createActivityTimerStateFromHistory } from "../data/activityTimer";
 
 import {
+  Image,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -1030,7 +1031,12 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.brand}>TachoTrack</Text>
+            <Image
+              source={require("../../assets/branding/tachotrack-header-logo.png")}
+              style={styles.brandLogo}
+              resizeMode="contain"
+              accessibilityLabel="TachoTrack"
+            />
 
             <Text style={styles.subtitle}>Driver Dashboard</Text>
           </View>
@@ -1785,10 +1791,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  brand: {
-    color: "#ffffff",
-    fontSize: 34,
-    fontWeight: "900",
+  brandLogo: {
+    width: 250,
+    height: 83,
   },
 
   subtitle: {
