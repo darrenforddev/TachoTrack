@@ -547,6 +547,12 @@ export default function CustomerOperationsDiaryScreen() {
                 </Text>
               </Pressable>
             </View>
+            <Pressable
+              style={styles.recordButton}
+              onPress={() => router.push("/operations/record")}
+            >
+              <Text style={styles.recordButtonText}>Record</Text>
+            </Pressable>
             <Pressable style={styles.actionButton} onPress={() => void hydrate()}>
               <Text style={styles.actionButtonText}>Refresh</Text>
             </Pressable>
@@ -563,8 +569,7 @@ export default function CustomerOperationsDiaryScreen() {
         )}
 
         <Text style={styles.footerNote}>
-          Read-only visual stage · recording controls will be connected after the
-          field layout is approved
+          Read-only audit view · use Record to add timestamped operational evidence
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -647,6 +652,19 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: "#38bdf8",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  recordButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderWidth: 1,
+    borderColor: "#22c55e",
+    borderRadius: 12,
+    backgroundColor: "#14532d",
+  },
+  recordButtonText: {
+    color: "#dcfce7",
     fontSize: 12,
     fontWeight: "900",
   },
