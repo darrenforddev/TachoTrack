@@ -551,6 +551,12 @@ export default function CustomerOperationsRecordScreen() {
           </View>
           <View style={styles.headerActions}>
             <Pressable
+              style={styles.dutyButton}
+              onPress={() => router.push("/operations/duty-boundary")}
+            >
+              <Text style={styles.dutyButtonText}>Duty Times</Text>
+            </Pressable>
+            <Pressable
               style={styles.headerButton}
               onPress={() => void hydrate()}
             >
@@ -1123,6 +1129,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#071426",
   },
   headerButtonText: { color: "#38bdf8", fontSize: 11, fontWeight: "900" },
+  dutyButton: {
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "#22c55e",
+    borderRadius: 10,
+    backgroundColor: "#14532d",
+  },
+  dutyButtonText: { color: "#dcfce7", fontSize: 11, fontWeight: "900" },
   closeButton: {
     paddingHorizontal: 17,
     paddingVertical: 12,
