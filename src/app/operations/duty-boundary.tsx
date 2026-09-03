@@ -28,6 +28,14 @@ import {
   type ManualDutyBoundaryReason,
   type ManualDutyBoundaryState,
 } from "../../engine/manualDutyBoundary";
+import {
+  displayUkDateInput as displayDate,
+  formatUkDateInput as localDate,
+  formatUkDateInputFromIsoDate,
+  isValidUkDateInput as isValidDateInput,
+  timestampFromUkDateTimeInputs as timestampFromInputs,
+  ukDateInputToIsoDate,
+} from "../../engine/ukDateInput";
 
 interface ReasonOption {
   reason: ManualDutyBoundaryReason;
@@ -46,72 +54,10 @@ const REASONS: readonly ReasonOption[] = [
   { reason: "other", label: "Other", activity: "other-work", mode: "EXPLAIN" },
 ];
 
-function localDate(value: Date = new Date()): string {
-  return [
-    value.getFullYear(),
-    String(value.getMonth() + 1).padStart(2, "0"),
-    String(value.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
 function localTime(value: Date = new Date()): string {
   return `${String(value.getHours()).padStart(2, "0")}:${String(
     value.getMinutes(),
   ).padStart(2, "0")}`;
-}
-
-function timestampFromInputs(dateText: string, timeText: string): string {
-  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText.trim());
-  const timeMatch = /^(\d{2}):(\d{2})$/.exec(timeText.trim());
-
-  if (dateMatch === null || timeMatch === null) {
-    throw new Error("Use date YYYY-MM-DD and time HH:MM.");
-  }
-
-  const year = Number(dateMatch[1]);
-  const month = Number(dateMatch[2]);
-  const day = Number(dateMatch[3]);
-  const hour = Number(timeMatch[1]);
-  const minute = Number(timeMatch[2]);
-  const value = new Date(year, month - 1, day, hour, minute, 0, 0);
-
-  if (
-    value.getFullYear() !== year ||
-    value.getMonth() !== month - 1 ||
-    value.getDate() !== day ||
-    value.getHours() !== hour ||
-    value.getMinutes() !== minute
-  ) {
-    throw new Error("Enter a valid local date and time.");
-  }
-
-  return value.toISOString();
-}
-
-function isValidDateInput(value: string): boolean {
-  try {
-    timestampFromInputs(value, "12:00");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function displayDate(value: string): string {
-  if (!isValidDateInput(value)) {
-    return value;
-  }
-
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
-
-  return Number.isFinite(date.getTime())
-    ? date.toLocaleDateString("en-GB", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-      })
-    : value;
 }
 
 function displayTimestamp(value: string | null): string {
@@ -255,7 +201,7 @@ export default function ManualDutyBoundaryScreen() {
   const [finishNote, setFinishNote] = useState("");
 
   const snapshotDutyDate = isValidDateInput(dutyDate)
-    ? dutyDate
+    ? ukDateInputToIsoDate(dutyDate)
     : "1970-01-01";
   const snapshot = useMemo(
     () => buildManualDutyBoundarySnapshot(state, snapshotDutyDate),
@@ -275,7 +221,9 @@ export default function ManualDutyBoundaryScreen() {
       const operationsDiary = getActiveCustomerOperationsDiary(
         operationsResult.archive,
       );
-      const targetDutyDate = operationsDiary?.dutyDate ?? dutyDateRef.current;
+      const targetDutyDate =
+        operationsDiary?.dutyDate ??
+        ukDateInputToIsoDate(dutyDateRef.current);
       const reconciled = await reconcileManualDutyBoundaryActivityStorage(
         targetDutyDate,
       );
@@ -293,7 +241,7 @@ export default function ManualDutyBoundaryScreen() {
       }
 
       if (operationsDiary !== null) {
-        setDutyDate(operationsDiary.dutyDate);
+        setDutyDate(formatUkDateInputFromIsoDate(operationsDiary.dutyDate));
       }
     } catch (caught) {
       setError(
@@ -365,7 +313,7 @@ export default function ManualDutyBoundaryScreen() {
           : timestampFromInputs(actualFinishDate, actualFinishTime);
       const evidence: ManualDutyBoundaryEvidence = {
         id: uniqueId(state, boundary, recordedAt),
-        dutyDate,
+        dutyDate: ukDateInputToIsoDate(dutyDate),
         boundary,
         activity: reasonDetails.activity,
         startedAt,
@@ -505,7 +453,7 @@ export default function ManualDutyBoundaryScreen() {
                 label="DUTY DATE"
                 value={dutyDate}
                 onChangeText={setDutyDate}
-                placeholder="YYYY-MM-DD"
+                placeholder="DD/MM/YYYY"
               />
             </View>
 
@@ -525,9 +473,9 @@ export default function ManualDutyBoundaryScreen() {
                   activity completed before inserting the card.
                 </Text>
                 <View style={styles.timeGrid}>
-                  <Field label="ACTUAL START DATE" value={actualStartDate} onChangeText={setActualStartDate} placeholder="YYYY-MM-DD" />
+                  <Field label="ACTUAL START DATE" value={actualStartDate} onChangeText={setActualStartDate} placeholder="DD/MM/YYYY" />
                   <Field label="ACTUAL START TIME" value={actualStartTime} onChangeText={setActualStartTime} placeholder="HH:MM" />
-                  <Field label="CARD INSERTED DATE" value={cardInsertedDate} onChangeText={setCardInsertedDate} placeholder="YYYY-MM-DD" />
+                  <Field label="CARD INSERTED DATE" value={cardInsertedDate} onChangeText={setCardInsertedDate} placeholder="DD/MM/YYYY" />
                   <Field label="CARD INSERTED TIME" value={cardInsertedTime} onChangeText={setCardInsertedTime} placeholder="HH:MM" />
                 </View>
                 <Text style={styles.choiceLabel}>WHAT WERE YOU DOING?</Text>
@@ -569,9 +517,9 @@ export default function ManualDutyBoundaryScreen() {
                   activity completed after ejecting the card.
                 </Text>
                 <View style={styles.timeGrid}>
-                  <Field label="CARD EJECTED DATE" value={cardEjectedDate} onChangeText={setCardEjectedDate} placeholder="YYYY-MM-DD" />
+                  <Field label="CARD EJECTED DATE" value={cardEjectedDate} onChangeText={setCardEjectedDate} placeholder="DD/MM/YYYY" />
                   <Field label="CARD EJECTED TIME" value={cardEjectedTime} onChangeText={setCardEjectedTime} placeholder="HH:MM" />
-                  <Field label="ACTUAL FINISH DATE" value={actualFinishDate} onChangeText={setActualFinishDate} placeholder="YYYY-MM-DD" />
+                  <Field label="ACTUAL FINISH DATE" value={actualFinishDate} onChangeText={setActualFinishDate} placeholder="DD/MM/YYYY" />
                   <Field label="ACTUAL FINISH TIME" value={actualFinishTime} onChangeText={setActualFinishTime} placeholder="HH:MM" />
                 </View>
                 <Text style={styles.choiceLabel}>WHAT WERE YOU DOING?</Text>
