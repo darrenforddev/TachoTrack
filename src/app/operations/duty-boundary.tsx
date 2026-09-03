@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
   Pressable,
@@ -16,9 +16,9 @@ import {
   loadCustomerOperationsDiaryArchiveResult,
 } from "../../data/customerOperationsDiaryStorage";
 import {
-  loadManualDutyBoundaryStateResult,
-  recordManualDutyBoundaryEvidenceInStorage,
-} from "../../data/manualDutyBoundaryStorage";
+  reconcileManualDutyBoundaryActivityStorage,
+  recordManualDutyBoundaryEvidenceWithActivityHistory,
+} from "../../data/manualDutyBoundaryActivityStorage";
 import {
   buildManualDutyBoundarySnapshot,
   createManualDutyBoundaryState,
@@ -238,6 +238,7 @@ export default function ManualDutyBoundaryScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dutyDate, setDutyDate] = useState(() => localDate(initialNow));
+  const dutyDateRef = useRef(dutyDate);
 
   const [actualStartDate, setActualStartDate] = useState(() => localDate(initialEarlier));
   const [actualStartTime, setActualStartTime] = useState(() => localTime(initialEarlier));
@@ -261,36 +262,48 @@ export default function ManualDutyBoundaryScreen() {
     [snapshotDutyDate, state],
   );
 
+  useEffect(() => {
+    dutyDateRef.current = dutyDate;
+  }, [dutyDate]);
+
   const hydrate = useCallback(async () => {
-    const [boundaryResult, operationsResult] = await Promise.all([
-      loadManualDutyBoundaryStateResult(),
-      loadCustomerOperationsDiaryArchiveResult(),
-    ]);
+    setMessage(null);
+    setError(null);
 
-    setState(boundaryResult.state);
-
-    if (boundaryResult.status === "invalid") {
-      setError(
-        boundaryResult.issues[0]?.message ??
-          "Stored duty evidence could not be loaded safely.",
+    try {
+      const operationsResult = await loadCustomerOperationsDiaryArchiveResult();
+      const operationsDiary = getActiveCustomerOperationsDiary(
+        operationsResult.archive,
       );
-    } else {
-      setError(null);
+      const targetDutyDate = operationsDiary?.dutyDate ?? dutyDateRef.current;
+      const reconciled = await reconcileManualDutyBoundaryActivityStorage(
+        targetDutyDate,
+      );
+      const boundaryResult = reconciled.boundaryLoadResult;
+
+      setState(boundaryResult.state);
 
       if (boundaryResult.status === "recovered") {
         setMessage("Valid evidence recovered; damaged evidence was isolated.");
+      } else if (
+        reconciled.sync.projectedEvidenceIds.length > 0 ||
+        reconciled.sync.activeHistoryFinished
+      ) {
+        setMessage("Activity history and compliance totals reconciled.");
       }
+
+      if (operationsDiary !== null) {
+        setDutyDate(operationsDiary.dutyDate);
+      }
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Duty evidence could not be refreshed safely.",
+      );
+    } finally {
+      setHydrated(true);
     }
-
-    const operationsDiary = getActiveCustomerOperationsDiary(
-      operationsResult.archive,
-    );
-
-    if (operationsDiary !== null) {
-      setDutyDate(operationsDiary.dutyDate);
-    }
-
-    setHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -364,15 +377,23 @@ export default function ManualDutyBoundaryScreen() {
         ...(note.trim() === "" ? {} : { note: note.trim() }),
         ...(current === undefined ? {} : { revisesEvidenceId: current.id }),
       };
-      const updated = await recordManualDutyBoundaryEvidenceInStorage(evidence);
+      const result =
+        await recordManualDutyBoundaryEvidenceWithActivityHistory(evidence);
 
-      setState(updated);
+      setState(result.boundaryState);
+      const activityMessage =
+        result.sync.projectedEvidenceIds.length > 0 ||
+        result.sync.activeHistoryFinished
+          ? " Activity history and compliance totals updated."
+          : " Existing activity already covers this time.";
       setMessage(
-        current === undefined
-          ? boundary === "before-card-insertion"
-            ? "Actual start and card insertion saved."
-            : "Card ejection and actual finish saved."
-          : "Correction saved; original evidence retained.",
+        `${
+          current === undefined
+            ? boundary === "before-card-insertion"
+              ? "Actual start and card insertion saved."
+              : "Card ejection and actual finish saved."
+            : "Correction saved; original evidence retained."
+        }${activityMessage}`,
       );
     } catch (caught) {
       setError(
