@@ -6,6 +6,7 @@ import {
   type DriverHistoryArchive,
 } from "../../data/driverHistoryArchive";
 import { loadDriverHistoryArchive } from "../../data/driverHistoryArchiveStorage";
+import { loadManualDutyBoundaryStateResult } from "../../data/manualDutyBoundaryStorage";
 import {
   createCurrentFortnightlyDriverHistory,
   rollFortnightlyDriverHistoryForward,
@@ -36,6 +37,12 @@ import {
   type WeekComplianceDaySummary,
   type WeekComplianceNetworkMapResult,
 } from "../../engine/weekComplianceNetworkMap";
+import {
+  buildManualDutyBoundarySnapshot,
+  createManualDutyBoundaryState,
+  type ManualDutyBoundaryState,
+} from "../../engine/manualDutyBoundary";
+import { projectManualDutyBoundariesOntoDriverDays } from "../../engine/manualDutyDriverDayAdapter";
 
 import {
   Pressable,
@@ -295,9 +302,11 @@ function ActivityRibbon({ day }: { day: WeekComplianceDaySummary }) {
 function JourneyDay({
   day,
   index,
+  manualDutyMinutes,
 }: {
   day: WeekComplianceDaySummary;
   index: number;
+  manualDutyMinutes: number;
 }) {
   const statusColour = getDayStatusColour(day);
 
@@ -335,6 +344,12 @@ function JourneyDay({
           ? `${formatMinutes(day.drivingMinutes)} drive · ${formatMinutes(day.workingMinutes)} work`
           : "Awaiting activity"}
       </Text>
+
+      {manualDutyMinutes > 0 ? (
+        <Text style={styles.manualDutyBadge}>
+          MANUAL DUTY · {formatMinutes(manualDutyMinutes)}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -590,6 +605,8 @@ export default function WeekComplianceNetworkScreen() {
   const [archive, setArchive] = useState<DriverHistoryArchive>(() =>
     createDriverHistoryArchive(),
   );
+  const [manualDutyState, setManualDutyState] =
+    useState<ManualDutyBoundaryState>(() => createManualDutyBoundaryState());
 
   useEffect(() => {
     if (requestedMode === "demo" || requestedMode === "live") {
@@ -608,12 +625,19 @@ export default function WeekComplianceNetworkScreen() {
 
     async function hydrate(): Promise<void> {
       try {
-        const [storedWeek, storedFortnight, storedRestState, storedArchive] =
+        const [
+          storedWeek,
+          storedFortnight,
+          storedRestState,
+          storedArchive,
+          storedManualDuty,
+        ] =
           await Promise.all([
             loadWeeklyDriverHistory(),
             loadFortnightlyDriverHistory(),
             loadRestSessionState(),
             loadDriverHistoryArchive(),
+            loadManualDutyBoundaryStateResult(),
           ]);
 
         if (cancelled) {
@@ -634,6 +658,7 @@ export default function WeekComplianceNetworkScreen() {
         setLiveHistory({ ...rolledFortnight, currentWeek });
         setRestState(storedRestState);
         setArchive(storedArchive);
+        setManualDutyState(storedManualDuty.state);
         setLoadError(null);
         setHydrated(true);
       } catch (error) {
@@ -663,10 +688,12 @@ export default function WeekComplianceNetworkScreen() {
   }>(() => {
     try {
       if (requestedWeekStart !== undefined) {
-        const sourceDays =
-          dataMode === "demo"
-            ? sampleComplianceJourneyYearDays
-            : archive.days;
+        const sourceDays = dataMode === "demo"
+          ? sampleComplianceJourneyYearDays
+          : projectManualDutyBoundariesOntoDriverDays(
+              archive.days,
+              manualDutyState,
+            ).days;
         const requestedWeek = buildRequestedWeekHistory(
           sourceDays,
           requestedWeekStart,
@@ -715,11 +742,23 @@ export default function WeekComplianceNetworkScreen() {
         };
       }
 
+      const projectedCurrentWeek = projectManualDutyBoundariesOntoDriverDays(
+        liveHistory.currentWeek.days,
+        manualDutyState,
+      );
+      const projectedPreviousWeek = projectManualDutyBoundariesOntoDriverDays(
+        liveHistory.previousWeek.days,
+        manualDutyState,
+      );
+
       return {
         result: buildWeekComplianceNetworkMap({
           id: `week-journey-${liveHistory.currentWeek.weekStartDate}`,
-          currentWeek: liveHistory.currentWeek,
-          previousWeekDays: liveHistory.previousWeek.days,
+          currentWeek: {
+            ...liveHistory.currentWeek,
+            days: projectedCurrentWeek.days,
+          },
+          previousWeekDays: projectedPreviousWeek.days,
           liveDate: getLocalDate(now),
           now,
         }),
@@ -734,7 +773,14 @@ export default function WeekComplianceNetworkScreen() {
             : "The week journey could not be built.",
       };
     }
-  }, [archive.days, dataMode, liveHistory, now, requestedWeekStart]);
+  }, [
+    archive.days,
+    dataMode,
+    liveHistory,
+    manualDutyState,
+    now,
+    requestedWeekStart,
+  ]);
 
   const result = prepared.result;
   const resultStartMilliseconds =
@@ -964,9 +1010,27 @@ export default function WeekComplianceNetworkScreen() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.journeyRow}
               >
-                {result.days.map((day, index) => (
-                  <JourneyDay key={day.date} day={day} index={index} />
-                ))}
+                {result.days.map((day, index) => {
+                  const manualSnapshot = buildManualDutyBoundarySnapshot(
+                    manualDutyState,
+                    day.date,
+                  );
+                  const manualDutyMinutes =
+                    dataMode === "live"
+                      ? manualSnapshot.additionalOtherWorkMinutes +
+                        manualSnapshot.additionalPoaMinutes +
+                        manualSnapshot.additionalBreakRestMinutes
+                      : 0;
+
+                  return (
+                    <JourneyDay
+                      key={day.date}
+                      day={day}
+                      index={index}
+                      manualDutyMinutes={manualDutyMinutes}
+                    />
+                  );
+                })}
               </ScrollView>
 
               <View style={styles.restSection}>
@@ -1130,7 +1194,7 @@ const styles = StyleSheet.create({
   journeyDay: {
     borderLeftColor: "#1d3855",
     borderLeftWidth: 1,
-    minHeight: 152,
+    minHeight: 172,
     paddingHorizontal: 11,
     paddingVertical: 11,
     width: 177,
@@ -1176,6 +1240,18 @@ const styles = StyleSheet.create({
   },
   journeyDayTotal: { color: "#dce8f6", fontSize: 10, fontWeight: "700", marginTop: 9 },
   journeyDayTotalEmpty: { color: "#526a87" },
+  manualDutyBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "#0b4b62",
+    borderRadius: 6,
+    color: "#72e3ff",
+    fontSize: 8,
+    fontWeight: "900",
+    marginTop: 7,
+    overflow: "hidden",
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
   restSection: {
     alignItems: "stretch",
     flexDirection: "row",

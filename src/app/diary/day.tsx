@@ -8,7 +8,17 @@ import {
 
 import { loadDriverHistoryArchive } from "../../data/driverHistoryArchiveStorage";
 
+import { loadManualDutyBoundaryStateResult } from "../../data/manualDutyBoundaryStorage";
+
 import { evaluateDriverDay } from "../../engine/complianceEngine";
+import {
+  createManualDutyBoundaryState,
+  type ManualDutyBoundaryState,
+} from "../../engine/manualDutyBoundary";
+import {
+  isManualDutyActivityPeriod,
+  projectManualDutyBoundariesOntoDriverDay,
+} from "../../engine/manualDutyDriverDayAdapter";
 
 import {
   Pressable,
@@ -99,18 +109,24 @@ export default function DailyDiaryScreen() {
   const [driverHistoryArchive, setDriverHistoryArchive] = useState(() =>
     createDriverHistoryArchive(),
   );
+  const [manualDutyState, setManualDutyState] =
+    useState<ManualDutyBoundaryState>(() => createManualDutyBoundaryState());
 
   useEffect(() => {
     let cancelled = false;
 
     async function hydrateArchive() {
-      const storedArchive = await loadDriverHistoryArchive();
+      const [storedArchive, storedManualDuty] = await Promise.all([
+        loadDriverHistoryArchive(),
+        loadManualDutyBoundaryStateResult(),
+      ]);
 
       if (cancelled) {
         return;
       }
 
       setDriverHistoryArchive(storedArchive);
+      setManualDutyState(storedManualDuty.state);
     }
 
     void hydrateArchive();
@@ -120,10 +136,24 @@ export default function DailyDiaryScreen() {
     };
   }, []);
 
-  const driverDay = useMemo(
+  const archivedDriverDay = useMemo(
     () => getDriverDayFromArchive(driverHistoryArchive, selectedDate),
     [driverHistoryArchive, selectedDate],
   );
+
+  const manualDutyProjection = useMemo(
+    () =>
+      archivedDriverDay === null
+        ? null
+        : projectManualDutyBoundariesOntoDriverDay(
+            archivedDriverDay,
+            manualDutyState,
+          ),
+    [archivedDriverDay, manualDutyState],
+  );
+
+  const driverDay = manualDutyProjection?.day ?? null;
+  const manualDutySummary = manualDutyProjection?.summary ?? null;
 
   const compliance = useMemo(
     () => (driverDay !== null ? evaluateDriverDay(driverDay) : null),
@@ -396,6 +426,35 @@ export default function DailyDiaryScreen() {
           </View>
         </View>
 
+        {manualDutySummary !== null && manualDutySummary.entryCount > 0 ? (
+          <View
+            style={[
+              styles.manualDutyPanel,
+              manualDutySummary.conflictingMinutes > 0 &&
+                styles.manualDutyPanelWarning,
+            ]}
+          >
+            <View style={styles.manualDutyCopy}>
+              <Text style={styles.manualDutyEyebrow}>PROTECTED MANUAL EVIDENCE</Text>
+              <Text style={styles.manualDutyTitle}>
+                {manualDutySummary.entryCount} manual duty {manualDutySummary.entryCount === 1 ? "entry" : "entries"} · {formatMinutes(manualDutySummary.totalMinutes)}
+              </Text>
+              <Text style={styles.manualDutyText}>
+                {manualDutySummary.conflictingMinutes > 0
+                  ? `${formatMinutes(manualDutySummary.conflictingMinutes)} overlaps archived activity and needs review; no time was double-counted.`
+                  : "Effective entries are reflected in the activity timeline and compliance totals."}
+              </Text>
+            </View>
+
+            <Pressable
+              style={styles.manualDutyButton}
+              onPress={() => router.push("/operations/duty-audit")}
+            >
+              <Text style={styles.manualDutyButtonText}>View Duty Audit →</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={styles.timelinePanel}>
           <View>
             <Text style={styles.sectionTitle}>24-Hour Activity Timeline</Text>
@@ -653,9 +712,15 @@ export default function DailyDiaryScreen() {
                 </View>
 
                 <View style={styles.activityMain}>
-                  <Text style={styles.activityType}>
-                    {getActivityLabel(activity.type)}
-                  </Text>
+                  <View style={styles.activityTypeRow}>
+                    <Text style={styles.activityType}>
+                      {getActivityLabel(activity.type)}
+                    </Text>
+
+                    {isManualDutyActivityPeriod(activity) ? (
+                      <Text style={styles.manualDutyActivityBadge}>MANUAL DUTY</Text>
+                    ) : null}
+                  </View>
 
                   <Text style={styles.activityDuration}>
                     {formatMinutes(activity.durationMinutes)}
@@ -977,6 +1042,62 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
+  manualDutyPanel: {
+    alignItems: "center",
+    backgroundColor: "#073321",
+    borderColor: "#22c55e",
+    borderLeftWidth: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 16,
+    justifyContent: "space-between",
+    padding: 16,
+  },
+
+  manualDutyPanelWarning: {
+    backgroundColor: "#352609",
+    borderColor: "#f5a400",
+  },
+
+  manualDutyCopy: { flex: 1 },
+
+  manualDutyEyebrow: {
+    color: "#38bdf8",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+
+  manualDutyTitle: {
+    color: "#f8fafc",
+    fontSize: 16,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  manualDutyText: {
+    color: "#a7c8b6",
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 4,
+  },
+
+  manualDutyButton: {
+    backgroundColor: "#07243a",
+    borderColor: "#38bdf8",
+    borderRadius: 9,
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+
+  manualDutyButtonText: {
+    color: "#5bd2ff",
+    fontSize: 10,
+    fontWeight: "900",
+  },
+
   detailPanel: {
     backgroundColor: "#0b1929",
     borderWidth: 1,
@@ -1121,10 +1242,28 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 
+  activityTypeRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
   activityType: {
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "900",
+  },
+
+  manualDutyActivityBadge: {
+    backgroundColor: "#0b4b62",
+    borderRadius: 6,
+    color: "#72e3ff",
+    fontSize: 8,
+    fontWeight: "900",
+    overflow: "hidden",
+    paddingHorizontal: 6,
+    paddingVertical: 3,
   },
 
   activityDuration: {

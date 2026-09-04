@@ -27,6 +27,7 @@ import {
 } from "../../data/activityHistory";
 import { loadActivityHistory } from "../../data/activityHistoryStorage";
 import { buildLiveDriverDay } from "../../data/liveDriverDayAdapter";
+import { loadManualDutyBoundaryStateResult } from "../../data/manualDutyBoundaryStorage";
 import {
   createInitialRestSessionState,
   type RestSession,
@@ -46,6 +47,11 @@ import {
 } from "../../engine/complianceNetworkMap";
 import type { LiveDayComplianceNetworkStates } from "../../engine/liveDayComplianceNetworkMap";
 import { buildLiveDayComplianceNetworkMap } from "../../engine/liveDayComplianceNetworkMap";
+import {
+  buildManualDutyBoundarySnapshot,
+  createManualDutyBoundaryState,
+  type ManualDutyBoundaryState,
+} from "../../engine/manualDutyBoundary";
 import {
   evaluateLongRunningActivityGuard,
   type LongRunningActivityConfirmation,
@@ -212,6 +218,8 @@ export default function ComplianceNetworkScreen() {
   const [restState, setRestState] = useState<RestSessionState>(() =>
     createInitialRestSessionState(),
   );
+  const [manualDutyState, setManualDutyState] =
+    useState<ManualDutyBoundaryState>(() => createManualDutyBoundaryState());
   const [nowMilliseconds, setNowMilliseconds] = useState(Date.now());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -227,13 +235,15 @@ export default function ComplianceNetworkScreen() {
     setLoadError(null);
 
     try {
-      const [storedHistory, storedRestState] = await Promise.all([
+      const [storedHistory, storedRestState, storedManualDuty] = await Promise.all([
         loadActivityHistory(),
         loadRestSessionState(),
+        loadManualDutyBoundaryStateResult(),
       ]);
 
       setHistory(storedHistory ?? createInitialActivityHistory());
       setRestState(storedRestState);
+      setManualDutyState(storedManualDuty.state);
       setNowMilliseconds(Date.now());
     } catch (error) {
       setLoadError(getErrorMessage(error));
@@ -265,6 +275,24 @@ export default function ComplianceNetworkScreen() {
   const displayedNowMilliseconds = demoMode
     ? new Date(SAMPLE_COMPLIANCE_NETWORK_NOW).getTime()
     : nowMilliseconds;
+
+  const manualDutySnapshot = useMemo(
+    () =>
+      demoMode
+        ? null
+        : buildManualDutyBoundarySnapshot(
+            manualDutyState,
+            formatLocalDate(new Date(displayedNowMilliseconds)),
+          ),
+    [demoMode, displayedNowMilliseconds, manualDutyState],
+  );
+
+  const manualDutyMinutes =
+    manualDutySnapshot === null
+      ? 0
+      : manualDutySnapshot.additionalOtherWorkMinutes +
+        manualDutySnapshot.additionalPoaMinutes +
+        manualDutySnapshot.additionalBreakRestMinutes;
 
   const longRunningGuard = useMemo(() => {
     try {
@@ -528,6 +556,28 @@ export default function ComplianceNetworkScreen() {
           <View style={styles.errorPanel}>
             <Text style={styles.errorTitle}>Map unavailable</Text>
             <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        {manualDutySnapshot !== null &&
+        manualDutySnapshot.tachographManualInputsRequired > 0 ? (
+          <View style={styles.manualDutyPanel}>
+            <View style={styles.manualDutyCopy}>
+              <Text style={styles.manualDutyEyebrow}>MANUAL DUTY EVIDENCE</Text>
+              <Text style={styles.manualDutyTitle}>
+                {manualDutySnapshot.tachographManualInputsRequired} protected {manualDutySnapshot.tachographManualInputsRequired === 1 ? "entry" : "entries"} · {formatMinutes(manualDutyMinutes)}
+              </Text>
+              <Text style={styles.manualDutyText}>
+                Included in today’s live activity and compliance calculations.
+              </Text>
+            </View>
+
+            <Pressable
+              style={styles.manualDutyButton}
+              onPress={() => router.push("/operations/duty-audit")}
+            >
+              <Text style={styles.manualDutyButtonText}>View Audit →</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -1339,6 +1389,50 @@ const styles = StyleSheet.create({
     borderColor: "#7f1d1d",
     backgroundColor: "#240a0a",
     marginBottom: 12,
+  },
+  manualDutyPanel: {
+    alignItems: "center",
+    backgroundColor: "#073321",
+    borderColor: "#22c55e",
+    borderLeftWidth: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 16,
+    justifyContent: "space-between",
+    marginBottom: 12,
+    padding: 14,
+  },
+  manualDutyCopy: { flex: 1 },
+  manualDutyEyebrow: {
+    color: "#38bdf8",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+  manualDutyTitle: {
+    color: "#f8fafc",
+    fontSize: 15,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  manualDutyText: {
+    color: "#a7c8b6",
+    fontSize: 10,
+    marginTop: 3,
+  },
+  manualDutyButton: {
+    backgroundColor: "#07243a",
+    borderColor: "#38bdf8",
+    borderRadius: 9,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  manualDutyButtonText: {
+    color: "#5bd2ff",
+    fontSize: 10,
+    fontWeight: "900",
   },
   activityGuardPanel: {
     flexDirection: "row",
