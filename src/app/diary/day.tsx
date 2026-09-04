@@ -51,6 +51,14 @@ function formatDisplayDate(dateString: string) {
   });
 }
 
+function formatLocalDate(date: Date = new Date()): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 function formatTime(timestamp: string) {
   const date = new Date(timestamp);
 
@@ -104,7 +112,8 @@ export default function DailyDiaryScreen() {
   const selectedDate =
     typeof params.date === "string"
       ? params.date
-      : new Date().toISOString().slice(0, 10);
+      : formatLocalDate();
+  const isLiveDay = selectedDate === formatLocalDate();
 
   const [driverHistoryArchive, setDriverHistoryArchive] = useState(() =>
     createDriverHistoryArchive(),
@@ -156,8 +165,11 @@ export default function DailyDiaryScreen() {
   const manualDutySummary = manualDutyProjection?.summary ?? null;
 
   const compliance = useMemo(
-    () => (driverDay !== null ? evaluateDriverDay(driverDay) : null),
-    [driverDay],
+    () =>
+      driverDay !== null
+        ? evaluateDriverDay(driverDay, { isLiveDay })
+        : null,
+    [driverDay, isLiveDay],
   );
 
   const monthDate = new Date(`${selectedDate}T12:00:00`);
@@ -371,7 +383,9 @@ export default function DailyDiaryScreen() {
             ]}
           >
             <Text style={styles.complianceBadgeText}>
-              {compliance.level.toUpperCase()} COMPLIANCE
+              {isLiveDay
+                ? `LIVE · ${compliance.level.toUpperCase()}`
+                : `${compliance.level.toUpperCase()} COMPLIANCE`}
             </Text>
           </View>
         </View>

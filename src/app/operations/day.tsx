@@ -548,6 +548,18 @@ export default function CustomerOperationsDiaryScreen() {
               </Pressable>
             </View>
             <Pressable
+              style={styles.dutyButton}
+              onPress={() => router.push("/operations/duty-boundary")}
+            >
+              <Text style={styles.dutyButtonText}>Actual Duty Times</Text>
+            </Pressable>
+            <Pressable
+              style={styles.auditButton}
+              onPress={() => router.push("/operations/duty-audit")}
+            >
+              <Text style={styles.auditButtonText}>Duty Audit Trail</Text>
+            </Pressable>
+            <Pressable
               style={styles.recordButton}
               onPress={() => router.push("/operations/record")}
             >
@@ -615,7 +627,9 @@ const styles = StyleSheet.create({
   },
   headerActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
+    justifyContent: "flex-end",
     gap: 10,
   },
   modeSwitch: {
@@ -653,6 +667,32 @@ const styles = StyleSheet.create({
   actionButtonText: {
     color: "#38bdf8",
     fontSize: 12,
+    fontWeight: "900",
+  },
+  dutyButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#22c55e",
+    borderRadius: 12,
+    backgroundColor: "#0b3b28",
+  },
+  dutyButtonText: {
+    color: "#6ee7a0",
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  auditButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#a855f7",
+    borderRadius: 12,
+    backgroundColor: "#24103a",
+  },
+  auditButtonText: {
+    color: "#d8b4fe",
+    fontSize: 11,
     fontWeight: "900",
   },
   recordButton: {

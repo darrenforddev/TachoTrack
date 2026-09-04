@@ -554,7 +554,13 @@ export default function CustomerOperationsRecordScreen() {
               style={styles.dutyButton}
               onPress={() => router.push("/operations/duty-boundary")}
             >
-              <Text style={styles.dutyButtonText}>Duty Times</Text>
+              <Text style={styles.dutyButtonText}>Actual Duty Times</Text>
+            </Pressable>
+            <Pressable
+              style={styles.auditButton}
+              onPress={() => router.push("/operations/duty-audit")}
+            >
+              <Text style={styles.auditButtonText}>Duty Audit</Text>
             </Pressable>
             <Pressable
               style={styles.headerButton}
@@ -1119,7 +1125,13 @@ const styles = StyleSheet.create({
   },
   title: { color: "#f8fafc", fontSize: 25, fontWeight: "900", marginTop: 3 },
   subtitle: { color: "#7891b2", fontSize: 11, marginTop: 3 },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
   headerButton: {
     paddingHorizontal: 15,
     paddingVertical: 12,
@@ -1138,6 +1150,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#14532d",
   },
   dutyButtonText: { color: "#dcfce7", fontSize: 11, fontWeight: "900" },
+  auditButton: {
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "#a855f7",
+    borderRadius: 10,
+    backgroundColor: "#24103a",
+  },
+  auditButtonText: { color: "#d8b4fe", fontSize: 11, fontWeight: "900" },
   closeButton: {
     paddingHorizontal: 17,
     paddingVertical: 12,
