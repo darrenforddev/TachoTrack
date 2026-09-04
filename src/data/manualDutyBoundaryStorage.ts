@@ -5,6 +5,7 @@ import {
   recordManualDutyBoundaryEvidence,
   type ManualDutyBoundary,
   type ManualDutyBoundaryActivity,
+  type ManualDutyBoundaryActivityAdjustment,
   type ManualDutyBoundaryEvidence,
   type ManualDutyBoundaryReason,
   type ManualDutyBoundaryState,
@@ -107,6 +108,55 @@ function isSource(value: unknown): value is ManualDutyEvidenceSource {
   return SOURCES.some((item) => item === value);
 }
 
+function requireActivityAdjustment(
+  value: unknown,
+): ManualDutyBoundaryActivityAdjustment | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (
+    !isRecord(value) ||
+    value.resolution !== "replace-manual" ||
+    !Array.isArray(value.conflicts) ||
+    value.conflicts.length === 0
+  ) {
+    throw new Error("Stored manual-duty activity adjustment is invalid.");
+  }
+
+  const conflicts = value.conflicts.map((conflict) => {
+    if (
+      !isRecord(conflict) ||
+      !isNonBlankString(conflict.eventId) ||
+      !["driving", "break", "other-work", "poa"].includes(
+        String(conflict.activity),
+      ) ||
+      conflict.source !== "manual" ||
+      !isIsoTimestamp(conflict.startedAt) ||
+      !(conflict.endedAt === null || isIsoTimestamp(conflict.endedAt)) ||
+      !isIsoTimestamp(conflict.overlapStartedAt) ||
+      !isIsoTimestamp(conflict.overlapEndedAt) ||
+      !Number.isInteger(conflict.overlapMinutes) ||
+      Number(conflict.overlapMinutes) <= 0
+    ) {
+      throw new Error("Stored adjusted activity conflict is invalid.");
+    }
+
+    return {
+      eventId: conflict.eventId,
+      activity: conflict.activity as ManualDutyBoundaryActivityAdjustment["conflicts"][number]["activity"],
+      source: "manual" as const,
+      startedAt: conflict.startedAt,
+      endedAt: conflict.endedAt,
+      overlapStartedAt: conflict.overlapStartedAt,
+      overlapEndedAt: conflict.overlapEndedAt,
+      overlapMinutes: Number(conflict.overlapMinutes),
+    };
+  });
+
+  return { resolution: "replace-manual", conflicts };
+}
+
 function requireEvidence(value: unknown): ManualDutyBoundaryEvidence {
   if (
     !isRecord(value) ||
@@ -126,6 +176,8 @@ function requireEvidence(value: unknown): ManualDutyBoundaryEvidence {
     throw new Error("Stored manual-duty boundary evidence is invalid.");
   }
 
+  const activityAdjustment = requireActivityAdjustment(value.activityAdjustment);
+
   return {
     id: value.id,
     dutyDate: value.dutyDate,
@@ -141,6 +193,7 @@ function requireEvidence(value: unknown): ManualDutyBoundaryEvidence {
     ...(value.revisesEvidenceId === undefined
       ? {}
       : { revisesEvidenceId: value.revisesEvidenceId }),
+    ...(activityAdjustment === undefined ? {} : { activityAdjustment }),
   };
 }
 

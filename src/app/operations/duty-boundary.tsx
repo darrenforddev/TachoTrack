@@ -454,7 +454,22 @@ export default function ManualDutyBoundaryScreen() {
 
     try {
       await persistEvidence(
-        pendingConflict.evidence,
+        {
+          ...pendingConflict.evidence,
+          activityAdjustment: {
+            resolution: "replace-manual",
+            conflicts: pendingConflict.error.conflicts.map((conflict) => ({
+              eventId: conflict.eventId,
+              activity: conflict.activity,
+              source: "manual" as const,
+              startedAt: conflict.startedAt,
+              endedAt: conflict.endedAt,
+              overlapStartedAt: conflict.overlapStartedAt,
+              overlapEndedAt: conflict.overlapEndedAt,
+              overlapMinutes: conflict.overlapMinutes,
+            })),
+          },
+        },
         pendingConflict.wasCorrection,
         "replace-manual",
       );
@@ -493,6 +508,12 @@ export default function ManualDutyBoundaryScreen() {
             </View>
           </View>
           <View style={styles.headerActions}>
+            <Pressable
+              style={styles.headerButton}
+              onPress={() => router.push("/operations/duty-audit" as never)}
+            >
+              <Text style={styles.headerButtonText}>Audit Trail</Text>
+            </Pressable>
             <Pressable style={styles.headerButton} onPress={() => void hydrate()}>
               <Text style={styles.headerButtonText}>Refresh</Text>
             </Pressable>

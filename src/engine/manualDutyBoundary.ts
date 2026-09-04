@@ -23,6 +23,22 @@ export type ManualDutyEvidenceSource =
   | "driver-correction"
   | "admin-correction";
 
+export interface ManualDutyBoundaryAdjustedActivity {
+  eventId: string;
+  activity: ActivityHistoryEvent["activity"];
+  source: "manual";
+  startedAt: string;
+  endedAt: string | null;
+  overlapStartedAt: string;
+  overlapEndedAt: string;
+  overlapMinutes: number;
+}
+
+export interface ManualDutyBoundaryActivityAdjustment {
+  resolution: "replace-manual";
+  conflicts: ManualDutyBoundaryAdjustedActivity[];
+}
+
 export interface ManualDutyBoundaryEvidence {
   id: string;
   dutyDate: string;
@@ -36,6 +52,7 @@ export interface ManualDutyBoundaryEvidence {
   source: ManualDutyEvidenceSource;
   note?: string;
   revisesEvidenceId?: string;
+  activityAdjustment?: ManualDutyBoundaryActivityAdjustment;
 }
 
 export interface ManualDutyBoundaryState {
@@ -187,6 +204,49 @@ function validateEvidenceShape(evidence: ManualDutyBoundaryEvidence): void {
 
   if (evidence.note !== undefined && typeof evidence.note !== "string") {
     throw new Error("Manual-duty note must be text.");
+  }
+
+  if (evidence.activityAdjustment !== undefined) {
+    if (
+      evidence.activityAdjustment.resolution !== "replace-manual" ||
+      !Array.isArray(evidence.activityAdjustment.conflicts) ||
+      evidence.activityAdjustment.conflicts.length === 0
+    ) {
+      throw new Error("Manual-duty activity-adjustment evidence is invalid.");
+    }
+
+    for (const conflict of evidence.activityAdjustment.conflicts) {
+      requireNonBlank(conflict.eventId, "Adjusted activity event id");
+
+      if (conflict.source !== "manual") {
+        throw new Error("Only manual activity may be recorded as adjusted.");
+      }
+
+      parseTimestamp(conflict.startedAt, "adjusted activity start time");
+
+      if (conflict.endedAt !== null) {
+        parseTimestamp(conflict.endedAt, "adjusted activity end time");
+      }
+
+      const overlapStartedAt = parseTimestamp(
+        conflict.overlapStartedAt,
+        "adjusted overlap start time",
+      );
+      const overlapEndedAt = parseTimestamp(
+        conflict.overlapEndedAt,
+        "adjusted overlap end time",
+      );
+
+      if (
+        overlapEndedAt <= overlapStartedAt ||
+        !Number.isInteger(conflict.overlapMinutes) ||
+        conflict.overlapMinutes <= 0 ||
+        conflict.overlapMinutes !==
+          Math.floor((overlapEndedAt - overlapStartedAt) / 60_000)
+      ) {
+        throw new Error("Manual-duty adjusted overlap duration is invalid.");
+      }
+    }
   }
 
   const startedAt = parseTimestamp(

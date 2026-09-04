@@ -5,7 +5,10 @@ import {
   recordManualDutyBoundaryEvidenceWithActivityHistory,
   type ManualDutyBoundaryActivityPersistence,
 } from "../../data/manualDutyBoundaryActivityStorage";
-import type { ManualDutyBoundaryLoadResult } from "../../data/manualDutyBoundaryStorage";
+import {
+  decodeManualDutyBoundaryStorage,
+  type ManualDutyBoundaryLoadResult,
+} from "../../data/manualDutyBoundaryStorage";
 import {
   createManualDutyBoundaryState,
   type ManualDutyBoundaryEvidence,
@@ -289,7 +292,24 @@ pass("A detected overlap pauses storage until the driver chooses");
 
 const conflictResolved =
   await recordManualDutyBoundaryEvidenceWithActivityHistory(
-    startEvidence(),
+    {
+      ...startEvidence(),
+      activityAdjustment: {
+        resolution: "replace-manual",
+        conflicts: [
+          {
+            eventId: "manual-break-around-start",
+            activity: "break",
+            source: "manual",
+            startedAt: "2026-09-03T05:30:00.000Z",
+            endedAt: "2026-09-03T06:10:00.000Z",
+            overlapStartedAt: "2026-09-03T05:40:00.000Z",
+            overlapEndedAt: "2026-09-03T06:00:00.000Z",
+            overlapMinutes: 20,
+          },
+        ],
+      },
+    },
     { overlapResolution: "replace-manual" },
     conflictMemory,
   );
@@ -309,7 +329,27 @@ assert(
   ),
   "resolved manual-duty projection must be persisted",
 );
+assert(
+  conflictResolved.boundaryState.evidence[0]?.activityAdjustment?.conflicts[0]
+    ?.overlapMinutes === 20,
+  "the driver's adjustment decision must remain in protected evidence",
+);
 pass("The driver's replace-manual choice is persisted without double-counting");
+
+const decodedAdjustment = decodeManualDutyBoundaryStorage(
+  JSON.stringify({
+    version: 1,
+    savedAt: "2026-09-03T06:02:00.000Z",
+    state: conflictResolved.boundaryState,
+  }),
+);
+assert(
+  decodedAdjustment.status === "loaded" &&
+    decodedAdjustment.state.evidence[0]?.activityAdjustment?.conflicts[0]
+      ?.eventId === "manual-break-around-start",
+  "activity-adjustment audit metadata survives a storage round trip",
+);
+pass("Activity-adjustment audit metadata survives protected storage");
 
 console.log("============================================================");
 console.log(
