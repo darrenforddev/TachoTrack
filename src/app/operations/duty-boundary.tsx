@@ -29,6 +29,11 @@ import {
   type ManualDutyBoundaryState,
 } from "../../engine/manualDutyBoundary";
 import {
+  ManualDutyBoundaryActivityConflictError,
+  type ManualDutyBoundaryActivityConflict,
+  type ManualDutyBoundaryActivityOverlapResolution,
+} from "../../engine/manualDutyBoundaryActivityAdapter";
+import {
   displayUkDateInput as displayDate,
   formatUkDateInput as localDate,
   formatUkDateInputFromIsoDate,
@@ -42,6 +47,12 @@ interface ReasonOption {
   label: string;
   activity: ManualDutyBoundaryActivity;
   mode: string;
+}
+
+interface PendingActivityConflict {
+  error: ManualDutyBoundaryActivityConflictError;
+  evidence: ManualDutyBoundaryEvidence;
+  wasCorrection: boolean;
 }
 
 const REASONS: readonly ReasonOption[] = [
@@ -79,6 +90,48 @@ function formatMinutes(value: number): string {
   return hours === 0
     ? `${remainder}m`
     : `${hours}h ${remainder.toString().padStart(2, "0")}m`;
+}
+
+function activityLabel(
+  activity: ManualDutyBoundaryActivityConflict["activity"],
+): string {
+  switch (activity) {
+    case "driving":
+      return "Driving";
+    case "break":
+      return "Break / rest";
+    case "other-work":
+      return "Other Work";
+    case "poa":
+      return "Availability / POA";
+  }
+}
+
+function sourceLabel(
+  source: ManualDutyBoundaryActivityConflict["source"],
+): string {
+  switch (source) {
+    case "manual":
+      return "Manual activity";
+    case "tachograph":
+      return "Tachograph evidence";
+    case "gps":
+      return "GPS evidence";
+    case "admin-correction":
+      return "Admin-corrected evidence";
+  }
+}
+
+function displayClock(value: string | null): string {
+  return value === null
+    ? "still active"
+    : new Date(value).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 }
 
 function findReason(reason: ManualDutyBoundaryReason): ReasonOption {
@@ -183,6 +236,8 @@ export default function ManualDutyBoundaryScreen() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingConflict, setPendingConflict] =
+    useState<PendingActivityConflict | null>(null);
   const [dutyDate, setDutyDate] = useState(() => localDate(initialNow));
   const dutyDateRef = useRef(dutyDate);
 
@@ -292,6 +347,10 @@ export default function ManualDutyBoundaryScreen() {
     setBusy(true);
     setMessage(null);
     setError(null);
+    setPendingConflict(null);
+
+    let attemptedEvidence: ManualDutyBoundaryEvidence | null = null;
+    let wasCorrection = false;
 
     try {
       const recordedAt = new Date().toISOString();
@@ -299,6 +358,7 @@ export default function ManualDutyBoundaryScreen() {
         boundary === "before-card-insertion"
           ? snapshot.beforeCardInsertion?.evidence
           : snapshot.afterCardEjection?.evidence;
+      wasCorrection = current !== undefined;
       const reason =
         boundary === "before-card-insertion" ? startReason : finishReason;
       const reasonDetails = findReason(reason);
@@ -325,31 +385,94 @@ export default function ManualDutyBoundaryScreen() {
         ...(note.trim() === "" ? {} : { note: note.trim() }),
         ...(current === undefined ? {} : { revisesEvidenceId: current.id }),
       };
-      const result =
-        await recordManualDutyBoundaryEvidenceWithActivityHistory(evidence);
+      attemptedEvidence = evidence;
+      await persistEvidence(evidence, wasCorrection, "reject");
+    } catch (caught) {
+      if (
+        caught instanceof ManualDutyBoundaryActivityConflictError &&
+        attemptedEvidence !== null
+      ) {
+        setPendingConflict({
+          error: caught,
+          evidence: attemptedEvidence,
+          wasCorrection,
+        });
+      } else {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Duty times could not be saved.",
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      setState(result.boundaryState);
-      const activityMessage =
-        result.sync.projectedEvidenceIds.length > 0 ||
-        result.sync.activeHistoryFinished
+  async function persistEvidence(
+    evidence: ManualDutyBoundaryEvidence,
+    wasCorrection: boolean,
+    overlapResolution: ManualDutyBoundaryActivityOverlapResolution,
+  ): Promise<void> {
+    const result =
+      await recordManualDutyBoundaryEvidenceWithActivityHistory(evidence, {
+        overlapResolution,
+      });
+
+    setState(result.boundaryState);
+    setPendingConflict(null);
+    const activityMessage =
+      result.sync.replacedActivityEventIds.length > 0
+        ? ` ${result.sync.replacedActivityEventIds.length} overlapping manual ${
+            result.sync.replacedActivityEventIds.length === 1
+              ? "activity was"
+              : "activities were"
+          } adjusted; compliance totals updated.`
+        : result.sync.projectedEvidenceIds.length > 0 ||
+            result.sync.activeHistoryFinished
           ? " Activity history and compliance totals updated."
           : " Existing activity already covers this time.";
-      setMessage(
-        `${
-          current === undefined
-            ? boundary === "before-card-insertion"
-              ? "Actual start and card insertion saved."
-              : "Card ejection and actual finish saved."
-            : "Correction saved; original evidence retained."
-        }${activityMessage}`,
+    setMessage(
+      `${
+        wasCorrection
+          ? "Correction saved; original evidence retained."
+          : evidence.boundary === "before-card-insertion"
+            ? "Actual start and card insertion saved."
+            : "Card ejection and actual finish saved."
+      }${activityMessage}`,
+    );
+  }
+
+  async function resolvePendingConflict(): Promise<void> {
+    if (busy || pendingConflict === null || !pendingConflict.error.canReplaceAll) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+
+    try {
+      await persistEvidence(
+        pendingConflict.evidence,
+        pendingConflict.wasCorrection,
+        "replace-manual",
       );
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Duty times could not be saved.",
+        caught instanceof Error
+          ? caught.message
+          : "The activity conflict could not be resolved.",
       );
     } finally {
       setBusy(false);
     }
+  }
+
+  function keepExistingActivity(): void {
+    setPendingConflict(null);
+    setError(null);
+    setMessage("Existing activity kept. No new duty evidence was saved.");
   }
 
   return (
@@ -404,6 +527,90 @@ export default function ManualDutyBoundaryScreen() {
         {error === null ? null : (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>! {error}</Text>
+          </View>
+        )}
+        {pendingConflict === null ? null : (
+          <View style={styles.conflictCard}>
+            <View style={styles.conflictHeader}>
+              <View style={styles.conflictIcon}>
+                <Text style={styles.conflictIconText}>!</Text>
+              </View>
+              <View style={styles.conflictHeadingCopy}>
+                <Text style={styles.conflictEyebrow}>ACTIVITY CONFLICT</Text>
+                <Text style={styles.conflictTitle}>Your choice is required</Text>
+                <Text style={styles.conflictIntro}>
+                  The proposed {activityLabel(pendingConflict.evidence.activity)} entry
+                  from {displayClock(pendingConflict.evidence.startedAt)} to {displayClock(pendingConflict.evidence.endedAt)} overlaps recorded activity.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.conflictList}>
+              {pendingConflict.error.conflicts.map((conflict) => (
+                <View key={conflict.eventId} style={styles.conflictRow}>
+                  <View style={styles.conflictRowMain}>
+                    <Text style={styles.conflictActivity}>
+                      {activityLabel(conflict.activity)}
+                    </Text>
+                    <Text style={styles.conflictMeta}>
+                      {sourceLabel(conflict.source)} · {displayClock(conflict.startedAt)}–{displayClock(conflict.endedAt)}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.conflictStatus,
+                      conflict.replaceable
+                        ? styles.conflictStatusReplaceable
+                        : styles.conflictStatusProtected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.conflictStatusText,
+                        conflict.replaceable
+                          ? styles.conflictStatusTextReplaceable
+                          : styles.conflictStatusTextProtected,
+                      ]}
+                    >
+                      {conflict.replaceable ? "MANUAL · CAN ADJUST" : "PROTECTED"}
+                    </Text>
+                    <Text style={styles.conflictMinutes}>
+                      {formatMinutes(conflict.overlapMinutes)} overlap
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            <Text style={styles.conflictGuidance}>
+              {pendingConflict.error.canReplaceAll
+                ? "Use Duty Entry will trim only the overlapping manual activity. Any recorded time before or after it will be preserved, preventing double-counting."
+                : "Tachograph, GPS and admin-corrected evidence cannot be replaced automatically. Keep the existing activity and correct the protected source record first."}
+            </Text>
+
+            <View style={styles.conflictActions}>
+              <Pressable
+                disabled={busy}
+                onPress={keepExistingActivity}
+                style={styles.keepActivityButton}
+              >
+                <Text style={styles.keepActivityButtonText}>Keep Existing Activity</Text>
+              </Pressable>
+              {pendingConflict.error.canReplaceAll ? (
+                <Pressable
+                  disabled={busy}
+                  onPress={() => void resolvePendingConflict()}
+                  style={[
+                    styles.useDutyEntryButton,
+                    busy ? styles.buttonDisabled : null,
+                  ]}
+                >
+                  <Text style={styles.useDutyEntryButtonText}>
+                    {busy ? "Updating…" : "Use Duty Entry"}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         )}
 
@@ -622,6 +829,32 @@ const styles = StyleSheet.create({
   successText: { color: "#4ade80", fontSize: 10, fontWeight: "800" },
   errorBanner: { padding: 10, borderWidth: 1, borderColor: "#be123c", borderRadius: 10, backgroundColor: "#3f0718" },
   errorText: { color: "#fb7185", fontSize: 10, fontWeight: "800" },
+  conflictCard: { padding: 14, borderWidth: 1, borderColor: "#f59e0b", borderLeftWidth: 4, borderRadius: 14, backgroundColor: "#291b03" },
+  conflictHeader: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
+  conflictIcon: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "#f59e0b" },
+  conflictIconText: { color: "#1c1302", fontSize: 15, fontWeight: "900" },
+  conflictHeadingCopy: { flex: 1 },
+  conflictEyebrow: { color: "#fbbf24", fontSize: 8, fontWeight: "900", letterSpacing: 1.1 },
+  conflictTitle: { color: "#fff7d6", fontSize: 17, fontWeight: "900", marginTop: 3 },
+  conflictIntro: { color: "#d6bd83", fontSize: 10, lineHeight: 15, marginTop: 5 },
+  conflictList: { gap: 7, marginTop: 12 },
+  conflictRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 10, borderWidth: 1, borderColor: "#674b12", borderRadius: 10, backgroundColor: "#171103" },
+  conflictRowMain: { flex: 1, minWidth: 220 },
+  conflictActivity: { color: "#f8fafc", fontSize: 11, fontWeight: "900" },
+  conflictMeta: { color: "#a9905c", fontSize: 8, marginTop: 4 },
+  conflictStatus: { minWidth: 130, paddingHorizontal: 9, paddingVertical: 6, borderWidth: 1, borderRadius: 8 },
+  conflictStatusReplaceable: { borderColor: "#22c55e", backgroundColor: "#052e1b" },
+  conflictStatusProtected: { borderColor: "#fb7185", backgroundColor: "#3f0718" },
+  conflictStatusText: { fontSize: 7, fontWeight: "900", textAlign: "center" },
+  conflictStatusTextReplaceable: { color: "#4ade80" },
+  conflictStatusTextProtected: { color: "#fb7185" },
+  conflictMinutes: { color: "#d6bd83", fontSize: 8, fontWeight: "800", textAlign: "center", marginTop: 3 },
+  conflictGuidance: { color: "#d6bd83", fontSize: 9, lineHeight: 14, marginTop: 11 },
+  conflictActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+  keepActivityButton: { minWidth: 165, alignItems: "center", paddingHorizontal: 13, paddingVertical: 10, borderWidth: 1, borderColor: "#7c6330", borderRadius: 9, backgroundColor: "#171103" },
+  keepActivityButtonText: { color: "#f7df9c", fontSize: 9, fontWeight: "900" },
+  useDutyEntryButton: { minWidth: 140, alignItems: "center", paddingHorizontal: 13, paddingVertical: 10, borderWidth: 1, borderColor: "#22c55e", borderRadius: 9, backgroundColor: "#14532d" },
+  useDutyEntryButtonText: { color: "#dcfce7", fontSize: 9, fontWeight: "900" },
   loadingCard: { padding: 30, alignItems: "center", borderWidth: 1, borderColor: "#1b3551", borderRadius: 14, backgroundColor: "#081628" },
   loadingText: { color: "#7891b2", fontSize: 12 },
   summaryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },

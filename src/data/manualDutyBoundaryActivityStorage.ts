@@ -19,8 +19,13 @@ import {
 } from "../engine/manualDutyBoundary";
 import {
   syncManualDutyBoundaryActivityHistory,
+  type ManualDutyBoundaryActivityOverlapResolution,
   type ManualDutyBoundaryActivitySyncResult,
 } from "../engine/manualDutyBoundaryActivityAdapter";
+
+export interface RecordManualDutyBoundaryActivityOptions {
+  overlapResolution?: ManualDutyBoundaryActivityOverlapResolution;
+}
 
 export interface ManualDutyBoundaryActivityPersistence {
   loadBoundaryResult(): Promise<ManualDutyBoundaryLoadResult>;
@@ -95,6 +100,7 @@ function shouldRepairActiveFinish(
 
 export async function recordManualDutyBoundaryEvidenceWithActivityHistory(
   evidence: ManualDutyBoundaryEvidence,
+  options: RecordManualDutyBoundaryActivityOptions = {},
   persistence: ManualDutyBoundaryActivityPersistence = defaultPersistence,
 ): Promise<ManualDutyBoundaryActivityStorageResult> {
   const [boundaryLoadResult, storedActivityHistory] = await Promise.all([
@@ -122,6 +128,7 @@ export async function recordManualDutyBoundaryEvidenceWithActivityHistory(
           boundaryState,
           evidence.dutyDate,
         ),
+      overlapResolution: options.overlapResolution ?? "reject",
     },
   );
 

@@ -9,7 +9,10 @@ import {
   type ManualDutyBoundaryEvidence,
   type ManualDutyBoundaryState,
 } from "../manualDutyBoundary";
-import { syncManualDutyBoundaryActivityHistory } from "../manualDutyBoundaryActivityAdapter";
+import {
+  ManualDutyBoundaryActivityConflictError,
+  syncManualDutyBoundaryActivityHistory,
+} from "../manualDutyBoundaryActivityAdapter";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -191,18 +194,94 @@ const conflict: ActivityHistoryEvent = {
   durationMilliseconds: 20 * 60 * 1000,
   source: "manual",
 };
-let conflictRejected = false;
+let conflictError: ManualDutyBoundaryActivityConflictError | null = null;
 try {
   syncManualDutyBoundaryActivityHistory(
     history([conflict]),
     completeState,
     "2026-09-03",
   );
-} catch {
-  conflictRejected = true;
+} catch (caught) {
+  if (caught instanceof ManualDutyBoundaryActivityConflictError) {
+    conflictError = caught;
+  }
 }
-assert(conflictRejected, "conflicting overlap must throw");
+assert(conflictError !== null, "conflicting overlap must throw a typed error");
 pass("Conflicting activity overlap is rejected");
+
+assert(
+  conflictError.conflicts.length === 1 &&
+    conflictError.conflicts[0]?.activity === "break" &&
+    conflictError.conflicts[0]?.overlapMinutes === 10 &&
+    conflictError.canReplaceAll,
+  "conflict details must identify the manual break and overlap",
+);
+pass("Conflict errors explain the activity, overlap and replaceability");
+
+const spanningBreak: ActivityHistoryEvent = {
+  id: "spanning-break",
+  activity: "break",
+  startedAt: "2026-09-03T05:30:00.000Z",
+  endedAt: "2026-09-03T06:10:00.000Z",
+  durationMilliseconds: 40 * 60 * 1000,
+  source: "manual",
+};
+const resolved = syncManualDutyBoundaryActivityHistory(
+  history([spanningBreak]),
+  completeState,
+  "2026-09-03",
+  { overlapResolution: "replace-manual" },
+);
+assert(
+  resolved.replacedActivityEventIds.includes("spanning-break"),
+  "replaced event id must be reported",
+);
+assert(
+  resolved.history.events.some(
+    (event) =>
+      event.id === "spanning-break" &&
+      event.startedAt === "2026-09-03T05:30:00.000Z" &&
+      event.endedAt === "2026-09-03T05:40:00.000Z",
+  ),
+  "activity before the replacement must remain",
+);
+assert(
+  resolved.history.events.some(
+    (event) =>
+      event.id === "spanning-break-after-manual-duty-start-1" &&
+      event.startedAt === "2026-09-03T06:00:00.000Z" &&
+      event.endedAt === "2026-09-03T06:10:00.000Z",
+  ),
+  "activity after the replacement must remain",
+);
+assert(
+  resolved.history.events.some(
+    (event) => event.id === "manual-duty-start-1",
+  ),
+  "manual-duty projection must occupy the resolved interval",
+);
+pass("Replacing a manual overlap preserves activity on both sides");
+
+const protectedTachograph: ActivityHistoryEvent = {
+  ...conflict,
+  id: "protected-tachograph-break",
+  source: "tachograph",
+};
+let protectedRejected = false;
+try {
+  syncManualDutyBoundaryActivityHistory(
+    history([protectedTachograph]),
+    completeState,
+    "2026-09-03",
+    { overlapResolution: "replace-manual" },
+  );
+} catch (caught) {
+  protectedRejected =
+    caught instanceof ManualDutyBoundaryActivityConflictError &&
+    !caught.canReplaceAll;
+}
+assert(protectedRejected, "tachograph evidence must remain protected");
+pass("Tachograph activity cannot be replaced automatically");
 
 const active: ActivityHistoryEvent = {
   id: "active-work",

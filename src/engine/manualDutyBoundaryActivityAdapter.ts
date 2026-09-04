@@ -8,8 +8,46 @@ import {
   buildManualDutyBoundarySnapshot,
   closeActiveActivityHistoryAt,
   type EffectiveManualDutyBoundaryEntry,
+  type ManualDutyBoundaryEvidence,
   type ManualDutyBoundaryState,
 } from "./manualDutyBoundary";
+
+export type ManualDutyBoundaryActivityOverlapResolution =
+  | "reject"
+  | "replace-manual";
+
+export interface ManualDutyBoundaryActivityConflict {
+  eventId: string;
+  activity: ActivityHistoryEvent["activity"];
+  source: ActivityHistoryEvent["source"];
+  startedAt: string;
+  endedAt: string | null;
+  overlapStartedAt: string;
+  overlapEndedAt: string;
+  overlapMinutes: number;
+  replaceable: boolean;
+}
+
+export class ManualDutyBoundaryActivityConflictError extends Error {
+  readonly evidence: ManualDutyBoundaryEvidence;
+  readonly conflicts: ManualDutyBoundaryActivityConflict[];
+  readonly canReplaceAll: boolean;
+
+  constructor(
+    evidence: ManualDutyBoundaryEvidence,
+    conflicts: ManualDutyBoundaryActivityConflict[],
+  ) {
+    super(
+      `Manual-duty ${evidence.activity} overlaps ${conflicts.length} existing activity-history ${
+        conflicts.length === 1 ? "period" : "periods"
+      }.`,
+    );
+    this.name = "ManualDutyBoundaryActivityConflictError";
+    this.evidence = evidence;
+    this.conflicts = conflicts;
+    this.canReplaceAll = conflicts.every((conflict) => conflict.replaceable);
+  }
+}
 
 export interface ManualDutyBoundaryActivitySyncOptions {
   /**
@@ -17,6 +55,7 @@ export interface ManualDutyBoundaryActivitySyncOptions {
    * This should only be enabled while recording the live shift's finish.
    */
   finishActiveHistoryAtActualDutyFinish?: boolean;
+  overlapResolution?: ManualDutyBoundaryActivityOverlapResolution;
 }
 
 export interface ManualDutyBoundaryActivitySyncResult {
@@ -24,6 +63,7 @@ export interface ManualDutyBoundaryActivitySyncResult {
   projectedEvidenceIds: string[];
   alreadyCoveredEvidenceIds: string[];
   removedSupersededProjectionIds: string[];
+  replacedActivityEventIds: string[];
   activeHistoryFinished: boolean;
 }
 
@@ -95,6 +135,168 @@ function activeEvent(history: ActivityHistoryState): ActivityHistoryEvent | null
   );
 }
 
+function timestamp(value: string): number {
+  const milliseconds = new Date(value).getTime();
+
+  if (!Number.isFinite(milliseconds)) {
+    throw new Error(`Invalid activity-history timestamp: ${value}`);
+  }
+
+  return milliseconds;
+}
+
+function activityConflicts(
+  history: ActivityHistoryState,
+  evidence: ManualDutyBoundaryEvidence,
+): ManualDutyBoundaryActivityConflict[] {
+  const requestedStart = timestamp(evidence.startedAt);
+  const requestedEnd = timestamp(evidence.endedAt);
+
+  return history.events.flatMap((event) => {
+    const eventStart = timestamp(event.startedAt);
+    const eventEnd =
+      event.endedAt === null
+        ? Number.POSITIVE_INFINITY
+        : timestamp(event.endedAt);
+    const overlapStart = Math.max(requestedStart, eventStart);
+    const overlapEnd = Math.min(requestedEnd, eventEnd);
+
+    if (overlapEnd <= overlapStart) {
+      return [];
+    }
+
+    return [
+      {
+        eventId: event.id,
+        activity: event.activity,
+        source: event.source,
+        startedAt: event.startedAt,
+        endedAt: event.endedAt,
+        overlapStartedAt: new Date(overlapStart).toISOString(),
+        overlapEndedAt: new Date(overlapEnd).toISOString(),
+        overlapMinutes: Math.floor((overlapEnd - overlapStart) / 60_000),
+        replaceable: event.source === "manual",
+      },
+    ];
+  });
+}
+
+function replaceManualActivityConflicts(
+  history: ActivityHistoryState,
+  evidence: ManualDutyBoundaryEvidence,
+  conflicts: ManualDutyBoundaryActivityConflict[],
+): ActivityHistoryState {
+  const error = new ManualDutyBoundaryActivityConflictError(
+    evidence,
+    conflicts,
+  );
+
+  if (!error.canReplaceAll) {
+    throw error;
+  }
+
+  const conflictIds = new Set(conflicts.map((conflict) => conflict.eventId));
+  const requestedStart = timestamp(evidence.startedAt);
+  const requestedEnd = timestamp(evidence.endedAt);
+  const events: ActivityHistoryEvent[] = [];
+  let activeEventId = history.activeEventId;
+
+  for (const event of history.events) {
+    if (!conflictIds.has(event.id)) {
+      events.push(event);
+      continue;
+    }
+
+    const eventStart = timestamp(event.startedAt);
+    const eventEnd =
+      event.endedAt === null
+        ? Number.POSITIVE_INFINITY
+        : timestamp(event.endedAt);
+    const keepsBefore = eventStart < requestedStart;
+    const keepsAfter = eventEnd > requestedEnd;
+
+    if (keepsBefore) {
+      events.push({
+        ...event,
+        endedAt: evidence.startedAt,
+        durationMilliseconds: requestedStart - eventStart,
+      });
+    }
+
+    if (keepsAfter) {
+      const afterId = keepsBefore
+        ? `${event.id}-after-manual-duty-${evidence.id}`
+        : event.id;
+
+      events.push({
+        ...event,
+        id: afterId,
+        startedAt: evidence.endedAt,
+        durationMilliseconds:
+          event.endedAt === null ? null : eventEnd - requestedEnd,
+      });
+
+      if (history.activeEventId === event.id) {
+        activeEventId = afterId;
+      }
+    } else if (history.activeEventId === event.id) {
+      activeEventId = null;
+    }
+  }
+
+  return {
+    events: events.sort(
+      (first, second) => timestamp(first.startedAt) - timestamp(second.startedAt),
+    ),
+    activeEventId,
+  };
+}
+
+function applyEntry(
+  history: ActivityHistoryState,
+  evidence: ManualDutyBoundaryEvidence,
+  resolution: ManualDutyBoundaryActivityOverlapResolution,
+): {
+  history: ActivityHistoryState;
+  replacedActivityEventIds: string[];
+} {
+  try {
+    return {
+      history: applyManualDutyBoundaryToActivityHistory(history, evidence),
+      replacedActivityEventIds: [],
+    };
+  } catch (caught) {
+    if (
+      !(caught instanceof Error) ||
+      caught.message !==
+        "Manual-duty activity overlaps an existing activity-history period."
+    ) {
+      throw caught;
+    }
+
+    const conflicts = activityConflicts(history, evidence);
+    const conflictError = new ManualDutyBoundaryActivityConflictError(
+      evidence,
+      conflicts,
+    );
+
+    if (resolution !== "replace-manual" || !conflictError.canReplaceAll) {
+      throw conflictError;
+    }
+
+    const replaced = replaceManualActivityConflicts(
+      history,
+      evidence,
+      conflicts,
+    );
+
+    return {
+      history: applyManualDutyBoundaryToActivityHistory(replaced, evidence),
+      replacedActivityEventIds: conflicts.map((conflict) => conflict.eventId),
+    };
+  }
+}
+
 /**
  * Reconciles the effective manual duty-boundary evidence for one duty date
  * into activity history. Superseded projections are removed first, so
@@ -132,12 +334,16 @@ export function syncManualDutyBoundaryActivityHistory(
 
   const projectedEvidenceIds: string[] = [];
   const alreadyCoveredEvidenceIds: string[] = [];
+  const replacedActivityEventIds: string[] = [];
 
   for (const entry of entries) {
-    const reconciled = applyManualDutyBoundaryToActivityHistory(
+    const applied = applyEntry(
       nextHistory,
       entry.evidence,
+      options.overlapResolution ?? "reject",
     );
+    const reconciled = applied.history;
+    replacedActivityEventIds.push(...applied.replacedActivityEventIds);
 
     if (reconciled === nextHistory) {
       alreadyCoveredEvidenceIds.push(entry.evidence.id);
@@ -152,6 +358,7 @@ export function syncManualDutyBoundaryActivityHistory(
     projectedEvidenceIds,
     alreadyCoveredEvidenceIds,
     removedSupersededProjectionIds: removed.removedIds,
+    replacedActivityEventIds: [...new Set(replacedActivityEventIds)],
     activeHistoryFinished,
   };
 }

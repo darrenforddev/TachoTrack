@@ -11,6 +11,7 @@ import {
   type ManualDutyBoundaryEvidence,
   type ManualDutyBoundaryState,
 } from "../manualDutyBoundary";
+import { ManualDutyBoundaryActivityConflictError } from "../manualDutyBoundaryActivityAdapter";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -103,6 +104,7 @@ async function runScenarios(): Promise<void> {
 const memory = memoryPersistence();
 const started = await recordManualDutyBoundaryEvidenceWithActivityHistory(
   startEvidence(),
+  {},
   memory,
 );
 assert(started.boundaryState.evidence.length === 1, "start must be stored");
@@ -131,6 +133,7 @@ memory.activityState = {
 };
 const finished = await recordManualDutyBoundaryEvidenceWithActivityHistory(
   finishEvidence(),
+  {},
   memory,
 );
 assert(finished.activityHistory.activeEventId === null, "active id must clear");
@@ -156,6 +159,7 @@ let pendingError = false;
 try {
   await recordManualDutyBoundaryEvidenceWithActivityHistory(
     startEvidence(),
+    {},
     failedMemory,
   );
 } catch (caught) {
@@ -200,6 +204,7 @@ let invalidRejected = false;
 try {
   await recordManualDutyBoundaryEvidenceWithActivityHistory(
     startEvidence(),
+    {},
     invalidMemory,
   );
 } catch {
@@ -212,6 +217,7 @@ pass("Invalid protected boundary storage is never overwritten");
 const historicalMemory = memoryPersistence();
 await recordManualDutyBoundaryEvidenceWithActivityHistory(
   startEvidence(),
+  {},
   historicalMemory,
 );
 historicalMemory.activityState = {
@@ -230,6 +236,7 @@ historicalMemory.activityState = {
 };
 const historicalFinish = await recordManualDutyBoundaryEvidenceWithActivityHistory(
   finishEvidence(),
+  {},
   historicalMemory,
 );
 assert(
@@ -249,6 +256,60 @@ assert(
   "historical finish evidence must still project",
 );
 pass("A historical finish preserves a newer live activity");
+
+const conflictMemory = memoryPersistence();
+conflictMemory.activityState = {
+  events: [
+    {
+      id: "manual-break-around-start",
+      activity: "break",
+      startedAt: "2026-09-03T05:30:00.000Z",
+      endedAt: "2026-09-03T06:10:00.000Z",
+      durationMilliseconds: 40 * 60 * 1000,
+      source: "manual",
+    },
+  ],
+  activeEventId: null,
+};
+let guidedConflict: ManualDutyBoundaryActivityConflictError | null = null;
+try {
+  await recordManualDutyBoundaryEvidenceWithActivityHistory(
+    startEvidence(),
+    {},
+    conflictMemory,
+  );
+} catch (caught) {
+  if (caught instanceof ManualDutyBoundaryActivityConflictError) {
+    guidedConflict = caught;
+  }
+}
+assert(guidedConflict !== null, "default storage flow must expose conflict");
+assert(conflictMemory.writes.length === 0, "choice must precede all writes");
+pass("A detected overlap pauses storage until the driver chooses");
+
+const conflictResolved =
+  await recordManualDutyBoundaryEvidenceWithActivityHistory(
+    startEvidence(),
+    { overlapResolution: "replace-manual" },
+    conflictMemory,
+  );
+assert(
+  conflictResolved.sync.replacedActivityEventIds.includes(
+    "manual-break-around-start",
+  ),
+  "storage result must report the replaced activity",
+);
+assert(
+  conflictMemory.writes.join(",") === "boundary,activity",
+  "resolved evidence and activity must persist in order",
+);
+assert(
+  conflictResolved.activityHistory.events.some(
+    (event) => event.id === "manual-duty-start-1",
+  ),
+  "resolved manual-duty projection must be persisted",
+);
+pass("The driver's replace-manual choice is persisted without double-counting");
 
 console.log("============================================================");
 console.log(
